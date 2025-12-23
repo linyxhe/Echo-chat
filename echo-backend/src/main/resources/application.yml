@@ -39,8 +39,9 @@ spring:
     port: 465
     protocol: smtp
     default-encoding: UTF-8
-    username: linyxhe@qq.com
-    password: qcowrsvenhsbdecf
+    username: xxxx@qq.com
+    # 邮箱授权码
+    password: xxxxx
     properties:
       mail:
         smtp:
