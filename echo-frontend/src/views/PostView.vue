@@ -79,7 +79,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { Star, StarFilled, ChatDotSquare } from '@element-plus/icons-vue'
-import request from '@/util/request'
+import request, { resolveUploadUrl } from '@/util/request'
 import defaultAvatar from '@/img/avatar/Member001.jpg'
 import { ElMessage } from 'element-plus'
 
@@ -97,6 +97,8 @@ const fetchPosts = async () => {
     if (res.code === 200) {
       posts.value = res.data.list.map(p => ({
         ...p,
+        userAvatar: resolveUploadUrl(p.userAvatar),
+        imageUrls: Array.isArray(p.imageUrls) ? p.imageUrls.map(resolveUploadUrl) : [],
         showComments: false,
         comments: [],
         newComment: ''

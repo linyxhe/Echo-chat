@@ -44,7 +44,7 @@ public class SecurityConfig {
                 // 配置URL访问规则
                 .authorizeHttpRequests(auth -> auth
                         // 允许匿名访问的URL
-                        .requestMatchers("/auth/**", "/admin/login", "/ws/**", "/error").permitAll()
+                        .requestMatchers("/auth/**", "/admin/login", "/ws/**", "/upload/**", "/error").permitAll()
                         // 其他所有请求需要认证
                         .anyRequest().authenticated()
                 );

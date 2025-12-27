@@ -17,8 +17,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -38,6 +40,9 @@ public class ChatServiceImpl extends ServiceImpl<MessageMapper, Message> impleme
 
     @Value("${server.port}")
     private String serverPort;
+
+    @Value("${app.upload-dir:upload}")
+    private String uploadDir;
 
     @Override
     public Result<Object> getMessages(Long currentUserId, Long friendId, String beforeTime, Integer limit) {
@@ -121,27 +126,23 @@ public class ChatServiceImpl extends ServiceImpl<MessageMapper, Message> impleme
         
         try {
             String originalFilename = file.getOriginalFilename();
-            String suffix = originalFilename.substring(originalFilename.lastIndexOf("."));
-            String fileName = UUID.randomUUID().toString() + suffix;
-            
-            // 确保目录存在
-            String uploadDir = "upload/";
-            File dir = new File(uploadDir);
-            if (!dir.exists()) {
-                dir.mkdirs();
-            }
-            
-            File dest = new File(uploadDir + fileName);
-            file.transferTo(dest);
-            
-            String fileUrl = "http://localhost:" + serverPort + "/upload/" + fileName; // 简单实现，实际应配置静态资源映射
+            String extension = StringUtils.getFilenameExtension(originalFilename);
+            String fileName = UUID.randomUUID() + (StringUtils.hasText(extension) ? ("." + extension) : "");
+
+            Path uploadPath = resolveUploadPath();
+            Files.createDirectories(uploadPath);
+
+            Path dest = uploadPath.resolve(fileName).toAbsolutePath().normalize();
+            file.transferTo(dest.toFile());
+
+            String fileUrl = "/upload/" + fileName;
             
             Map<String, Object> data = new HashMap<>();
             data.put("fileId", UUID.randomUUID().toString());
-            data.put("fileName", originalFilename);
+            data.put("fileName", StringUtils.hasText(originalFilename) ? originalFilename : fileName);
             data.put("fileSize", file.getSize());
             data.put("fileUrl", fileUrl);
-            data.put("fileType", suffix.substring(1).toUpperCase());
+            data.put("fileType", StringUtils.hasText(extension) ? extension.toUpperCase() : "UNKNOWN");
             
             return Result.success(data);
             
@@ -149,6 +150,14 @@ public class ChatServiceImpl extends ServiceImpl<MessageMapper, Message> impleme
             e.printStackTrace();
             return Result.fail("文件上传失败");
         }
+    }
+
+    private Path resolveUploadPath() {
+        Path path = Paths.get(uploadDir);
+        if (path.isAbsolute()) {
+            return path.toAbsolutePath().normalize();
+        }
+        return Paths.get(System.getProperty("user.dir")).resolve(path).toAbsolutePath().normalize();
     }
 
     @Override

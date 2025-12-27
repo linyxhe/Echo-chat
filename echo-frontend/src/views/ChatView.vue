@@ -5,14 +5,14 @@
         <span>消息</span>
       </div>
       <div class="list-content">
-        <div 
-          v-for="conv in conversations" 
-          :key="conv.conversationId" 
+        <div
+          v-for="conv in conversations"
+          :key="conv.conversationId"
           class="conversation-item"
           :class="{ active: currentFriendId === conv.friendId }"
           @click="selectConversation(conv)"
         >
-          <el-avatar :src="conv.friendAvatar || defaultAvatar" />
+          <el-avatar :src="resolveUploadUrl(conv.friendAvatar) || defaultAvatar" />
           <div class="conv-info">
             <div class="conv-top">
               <span class="nickname">{{ conv.friendNickname }}</span>
@@ -20,35 +20,58 @@
             </div>
             <div class="conv-bottom">
               <span class="last-msg">{{ getConversationPreview(conv) }}</span>
-              <el-badge v-if="conv.unreadCount > 0" :value="conv.unreadCount" class="unread-badge" />
+              <el-badge
+                v-if="conv.unreadCount > 0"
+                :value="conv.unreadCount"
+                class="unread-badge"
+              />
             </div>
           </div>
         </div>
       </div>
     </div>
-    
+
     <div class="chat-window" v-if="currentFriendId">
       <div class="chat-header">
         <span>{{ currentFriendNickname }}</span>
       </div>
       <div class="chat-messages" ref="messageBox">
-        <div 
-          v-for="msg in messages" 
-          :key="msg.id" 
+        <div
+          v-for="msg in messages"
+          :key="msg.id"
           class="message-item"
           :class="{ self: msg.senderId === currentUserId }"
         >
-          <el-avatar v-if="msg.senderId !== currentUserId" :src="currentFriendAvatar || defaultAvatar" class="avatar" />
+          <el-avatar
+            v-if="msg.senderId !== currentUserId"
+            :src="resolveUploadUrl(currentFriendAvatar) || defaultAvatar"
+            class="avatar"
+          />
           <div class="message-content">
             <div class="text" v-if="msg.messageType === 'TEXT'">{{ msg.content }}</div>
             <div class="image" v-else-if="msg.messageType === 'IMAGE'">
-              <el-image :src="msg.content" :preview-src-list="[msg.content]" />
+              <el-image
+                :src="resolveUploadUrl(msg.content)"
+                :preview-src-list="[resolveUploadUrl(msg.content)]"
+              />
             </div>
             <div class="file" v-else-if="msg.messageType === 'FILE'">
-               <a :href="getFileInfo(msg).url" target="_blank">{{ getFileInfo(msg).name }}</a>
+              <div class="file-card">
+                <div class="file-name">{{ getFileInfo(msg).name }}</div>
+                <div class="file-actions">
+                  <el-button link type="primary" @click.stop="openFile(msg)"
+                    >打开</el-button
+                  >
+                  <el-button link @click.stop="downloadFile(msg)">下载</el-button>
+                </div>
+              </div>
             </div>
           </div>
-          <el-avatar v-if="msg.senderId === currentUserId" :src="currentUserAvatar || defaultAvatar" class="avatar" />
+          <el-avatar
+            v-if="msg.senderId === currentUserId"
+            :src="resolveUploadUrl(currentUserAvatar) || defaultAvatar"
+            class="avatar"
+          />
         </div>
       </div>
       <div class="chat-input">
@@ -73,231 +96,255 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { FolderAdd } from '@element-plus/icons-vue'
-import request from '@/util/request'
-import { useWebSocket } from '@/util/webSocket'
-import defaultAvatar from '@/img/avatar/Member001.jpg'
-import { ElMessage } from 'element-plus'
+import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
+import { useRoute } from "vue-router";
+import { FolderAdd } from "@element-plus/icons-vue";
+import request, { resolveUploadUrl } from "@/util/request";
+import { useWebSocket } from "@/util/webSocket";
+import defaultAvatar from "@/img/avatar/Member001.jpg";
+import { ElMessage } from "element-plus";
 
-const currentUserId = Number(localStorage.getItem('userId'))
-const currentUserAvatar = ref(null) // TODO: get from user info
-const conversations = ref([])
-const currentConversationId = ref(null)
-const currentFriendId = ref(null)
-const currentFriendNickname = ref('')
-const currentFriendAvatar = ref('')
-const messages = ref([])
-const inputText = ref('')
-const messageBox = ref(null)
-const route = useRoute()
+const currentUserId = Number(localStorage.getItem("userId"));
+const currentUserAvatar = ref(null); // TODO: get from user info
+const conversations = ref([]);
+const currentConversationId = ref(null);
+const currentFriendId = ref(null);
+const currentFriendNickname = ref("");
+const currentFriendAvatar = ref("");
+const messages = ref([]);
+const inputText = ref("");
+const messageBox = ref(null);
+const route = useRoute();
 
 const ws = useWebSocket({
-  endpoint: '/ws'
-})
+  endpoint: "/ws",
+});
 
-ws.on('open', () => {
-  console.log('Chat connected')
-})
+ws.on("open", () => {
+  console.log("Chat connected");
+});
 
-ws.on('message', (event) => {
-  const msg = safeParseJson(event.data)
-  if (!msg || !msg.type) return
+ws.on("message", (event) => {
+  const msg = safeParseJson(event.data);
+  if (!msg || !msg.type) return;
 
-  if (msg.type === 'NEW_MESSAGE') {
-    handleNewMessage(normalizeMessage(msg.data))
-  } else if (msg.type === 'MESSAGE_ACK') {
-    handleMessageAck(msg.data)
-  } else if (msg.type === 'MESSAGE_READ_RECEIPT') {
-    handleReadReceipt(msg.data)
+  if (msg.type === "NEW_MESSAGE") {
+    handleNewMessage(normalizeMessage(msg.data));
+  } else if (msg.type === "MESSAGE_ACK") {
+    handleMessageAck(msg.data);
+  } else if (msg.type === "MESSAGE_READ_RECEIPT") {
+    handleReadReceipt(msg.data);
   }
-})
+});
 
 const safeParseJson = (text) => {
   try {
-    return JSON.parse(text)
+    return JSON.parse(text);
   } catch (e) {
-    return null
+    return null;
   }
-}
+};
 
 const normalizeMessage = (msg) => {
-  if (!msg || msg.messageType !== 'FILE') return msg
+  if (!msg || msg.messageType !== "FILE") return msg;
 
   if (msg.fileUrl && msg.fileName) {
-    return msg
+    return msg;
   }
 
-  const info = safeParseJson(msg.content)
-  if (info && typeof info === 'object') {
+  const info = safeParseJson(msg.content);
+  if (info && typeof info === "object") {
     return {
       ...msg,
       content: info.name || msg.content,
       fileUrl: info.url || msg.fileUrl,
       fileName: info.name || msg.fileName,
-      fileSize: info.size || msg.fileSize
-    }
+      fileSize: info.size || msg.fileSize,
+    };
   }
 
-  return msg
-}
+  return msg;
+};
 
 const getFileInfo = (msg) => {
-  if (!msg) return { url: '#', name: '' }
-  if (msg.fileUrl) return { url: msg.fileUrl, name: msg.fileName || msg.content || '文件' }
-  const info = safeParseJson(msg.content)
-  if (info && typeof info === 'object') {
-    return { url: info.url || '#', name: info.name || '文件' }
+  if (!msg) return { url: "#", name: "" };
+  if (msg.fileUrl)
+    return { url: msg.fileUrl, name: msg.fileName || msg.content || "文件" };
+  const info = safeParseJson(msg.content);
+  if (info && typeof info === "object") {
+    return { url: info.url || "#", name: info.name || "文件" };
   }
-  return { url: '#', name: msg.content || '文件' }
-}
+  return { url: "#", name: msg.content || "文件" };
+};
+
+const openFile = (msg) => {
+  const info = getFileInfo(msg);
+  if (!info.url || info.url === "#") return;
+  window.open(resolveUploadUrl(info.url), "_blank", "noopener,noreferrer");
+};
+
+const downloadFile = (msg) => {
+  const info = getFileInfo(msg);
+  if (!info.url || info.url === "#") return;
+
+  const a = document.createElement("a");
+  a.href = resolveUploadUrl(info.url);
+  a.download = info.name || "";
+  a.rel = "noopener noreferrer";
+  a.target = "_blank";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+};
 
 const handleNewMessage = (msgData) => {
   // 如果是当前会话的消息，直接追加
-  if (msgData.senderId === currentFriendId.value || (msgData.senderId === currentUserId && msgData.receiverId === currentFriendId.value)) {
-    messages.value.push(msgData)
-    scrollToBottom()
+  if (
+    msgData.senderId === currentFriendId.value ||
+    (msgData.senderId === currentUserId && msgData.receiverId === currentFriendId.value)
+  ) {
+    messages.value.push(msgData);
+    scrollToBottom();
     // 发送已读确认
     if (msgData.senderId === currentFriendId.value) {
       ws.send({
-        type: 'MESSAGE_READ',
+        type: "MESSAGE_READ",
         data: {
           senderId: msgData.senderId,
-          messageIds: [msgData.id]
-        }
-      })
+          messageIds: [msgData.id],
+        },
+      });
     }
   } else {
     // 更新会话列表未读数
-    const conv = conversations.value.find(c => c.friendId === msgData.senderId)
+    const conv = conversations.value.find((c) => c.friendId === msgData.senderId);
     if (conv) {
-      conv.unreadCount++
-      conv.lastMessage = msgData
-      conv.updatedAt = msgData.createdAt // timestamp
+      conv.unreadCount++;
+      conv.lastMessage = msgData;
+      conv.updatedAt = msgData.createdAt; // timestamp
     } else {
-      fetchConversations() // 重新拉取
+      fetchConversations(); // 重新拉取
     }
   }
-}
+};
 
 const fetchConversations = async () => {
   try {
-    const res = await request.get('/chat/conversations')
+    const res = await request.get("/chat/conversations");
     if (res.code === 200) {
-      conversations.value = res.data.list
-      trySelectConversationFromRoute()
+      conversations.value = res.data.list;
+      trySelectConversationFromRoute();
     }
   } catch (e) {
-    console.error(e)
+    console.error(e);
   }
-}
+};
 
 const getConversationPreview = (conv) => {
-  if (!conv || !conv.lastMessage) return ''
-  const last = normalizeMessage(conv.lastMessage)
-  if (last.messageType === 'FILE') return `[文件] ${getFileInfo(last).name}`
-  if (last.messageType === 'IMAGE') return '[图片]'
-  return last.content || ''
-}
+  if (!conv || !conv.lastMessage) return "";
+  const last = normalizeMessage(conv.lastMessage);
+  if (last.messageType === "FILE") return `[文件] ${getFileInfo(last).name}`;
+  if (last.messageType === "IMAGE") return "[图片]";
+  return last.content || "";
+};
 
 const selectConversation = async (conv) => {
-  currentConversationId.value = conv.conversationId
-  currentFriendId.value = conv.friendId
-  currentFriendNickname.value = conv.friendNickname
-  currentFriendAvatar.value = conv.friendAvatar
-  conv.unreadCount = 0 // 清零
-  
-  await fetchMessages()
-  markCurrentConversationRead()
-}
+  currentConversationId.value = conv.conversationId;
+  currentFriendId.value = conv.friendId;
+  currentFriendNickname.value = conv.friendNickname;
+  currentFriendAvatar.value = conv.friendAvatar;
+  conv.unreadCount = 0; // 清零
+
+  await fetchMessages();
+  markCurrentConversationRead();
+};
 
 const trySelectConversationFromRoute = async () => {
-  const friendIdRaw = route.query?.friendId
-  if (!friendIdRaw) return
-  const friendId = Number(friendIdRaw)
-  if (!friendId || Number.isNaN(friendId)) return
+  const friendIdRaw = route.query?.friendId;
+  if (!friendIdRaw) return;
+  const friendId = Number(friendIdRaw);
+  if (!friendId || Number.isNaN(friendId)) return;
 
-  const conv = conversations.value.find(c => Number(c.friendId) === friendId)
+  const conv = conversations.value.find((c) => Number(c.friendId) === friendId);
   if (conv) {
-    await selectConversation(conv)
-    return
+    await selectConversation(conv);
+    return;
   }
 
-  currentConversationId.value = null
-  currentFriendId.value = friendId
-  currentFriendNickname.value = String(route.query?.nickname || '')
-  currentFriendAvatar.value = String(route.query?.avatar || '')
-  messages.value = []
-  await fetchMessages()
-}
+  currentConversationId.value = null;
+  currentFriendId.value = friendId;
+  currentFriendNickname.value = String(route.query?.nickname || "");
+  currentFriendAvatar.value = String(route.query?.avatar || "");
+  messages.value = [];
+  await fetchMessages();
+};
 
 const fetchMessages = async () => {
   try {
-    const res = await request.get('/chat/messages', {
-      params: { friendId: currentFriendId.value }
-    })
+    const res = await request.get("/chat/messages", {
+      params: { friendId: currentFriendId.value },
+    });
     if (res.code === 200) {
-      messages.value = (res.data.messages || []).map(normalizeMessage)
-      scrollToBottom()
+      messages.value = (res.data.messages || []).map(normalizeMessage);
+      scrollToBottom();
     }
   } catch (e) {
-    console.error(e)
+    console.error(e);
   }
-}
+};
 
 const markCurrentConversationRead = () => {
-  if (!currentFriendId.value) return
+  if (!currentFriendId.value) return;
   const unreadIds = messages.value
-    .filter(m => m.senderId === currentFriendId.value && m.isRead === false && m.id)
-    .map(m => m.id)
-  if (!unreadIds.length) return
+    .filter((m) => m.senderId === currentFriendId.value && m.isRead === false && m.id)
+    .map((m) => m.id);
+  if (!unreadIds.length) return;
 
   ws.send({
-    type: 'MESSAGE_READ',
+    type: "MESSAGE_READ",
     data: {
       senderId: currentFriendId.value,
-      messageIds: unreadIds
-    }
-  })
-}
+      messageIds: unreadIds,
+    },
+  });
+};
 
 const sendMessage = () => {
-  if (!inputText.value.trim()) return
-  if (!currentFriendId.value) return
-  
-  const content = inputText.value
-  const clientMessageId = String(Date.now())
+  if (!inputText.value.trim()) return;
+  if (!currentFriendId.value) return;
+
+  const content = inputText.value;
+  const clientMessageId = String(Date.now());
   const msg = {
-    type: 'CHAT_MESSAGE',
+    type: "CHAT_MESSAGE",
     data: {
       receiverId: currentFriendId.value,
-      messageType: 'TEXT',
+      messageType: "TEXT",
       content: content,
-      clientMessageId
-    }
-  }
-  
-  ws.send(msg)
+      clientMessageId,
+    },
+  };
 
-  const now = new Date().toISOString()
-  const conv = conversations.value.find(c => c.friendId === currentFriendId.value)
+  ws.send(msg);
+
+  const now = new Date().toISOString();
+  const conv = conversations.value.find((c) => c.friendId === currentFriendId.value);
   if (conv) {
     conv.lastMessage = {
       id: clientMessageId,
       senderId: currentUserId,
       receiverId: currentFriendId.value,
       content,
-      messageType: 'TEXT',
-      createdAt: now
-    }
-    conv.updatedAt = now
+      messageType: "TEXT",
+      createdAt: now,
+    };
+    conv.updatedAt = now;
   } else {
     conversations.value.unshift({
       conversationId: `temp-${currentFriendId.value}`,
       friendId: currentFriendId.value,
-      friendNickname: currentFriendNickname.value || '',
-      friendAvatar: currentFriendAvatar.value || '',
+      friendNickname: currentFriendNickname.value || "",
+      friendAvatar: currentFriendAvatar.value || "",
       unreadCount: 0,
       updatedAt: now,
       lastMessage: {
@@ -305,159 +352,157 @@ const sendMessage = () => {
         senderId: currentUserId,
         receiverId: currentFriendId.value,
         content,
-        messageType: 'TEXT',
-        createdAt: now
-      }
-    })
+        messageType: "TEXT",
+        createdAt: now,
+      },
+    });
   }
-  
+
   // 乐观更新
   messages.value.push({
     id: Date.now(), // 临时ID
     senderId: currentUserId,
     receiverId: currentFriendId.value,
     content: content,
-    messageType: 'TEXT',
+    messageType: "TEXT",
     clientMessageId,
-    createdAt: new Date().toISOString()
-  })
-  
-  inputText.value = ''
-  scrollToBottom()
-}
+    createdAt: new Date().toISOString(),
+  });
+
+  inputText.value = "";
+  scrollToBottom();
+};
 
 const handleBeforeUpload = (file) => {
   if (file.size / 1024 / 1024 > 10) {
-    ElMessage.error('文件大小不能超过10MB')
-    return false
+    ElMessage.error("文件大小不能超过10MB");
+    return false;
   }
-  return true
-}
+  return true;
+};
 
 const handleFileUpload = async (options) => {
   if (!currentFriendId.value) {
-    ElMessage.warning('请先选择一个会话')
-    return
+    ElMessage.warning("请先选择一个会话");
+    return;
   }
-  const formData = new FormData()
-  formData.append('file', options.file)
-  formData.append('receiverId', currentFriendId.value)
-  
+  const formData = new FormData();
+  formData.append("file", options.file);
+  formData.append("receiverId", currentFriendId.value);
+
   try {
-    const res = await request.post('/chat/file/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-    
+    const res = await request.post("/chat/file/upload", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+
     if (res.code === 200) {
-      // 发送文件消息通知
-      const fileData = res.data
-      const clientMessageId = String(Date.now())
+      const fileData = res.data;
+      const clientMessageId = String(Date.now());
+      const isImage = Boolean(
+        options?.file?.type && String(options.file.type).startsWith("image/")
+      );
       const msg = {
-        type: 'CHAT_MESSAGE',
+        type: "CHAT_MESSAGE",
         data: {
           receiverId: currentFriendId.value,
-          messageType: 'FILE', // 简化处理，不区分IMAGE/FILE
-          content: fileData.fileName, // 这里应该传 content? 或者 fileUrl? 
-          // 后端 Message实体有 content, fileUrl, fileName.
-          // WebSocket消息体里只有 content. 
-          // 我需要修改后端 ChatEndpoint 来处理 fileUrl 等字段。
-          // 或者 content 存 JSON? 
-          // 简单起见，Text消息 content是文本。File消息 content是 [文件]文件名? 
-          // 实际上 ChatEndpoint 接收参数只有 content. 
-          // 这是一个设计缺陷。我应该在 WebSocket 消息 data 里增加 fileUrl, fileName 等字段。
-          // 现在先不改后端，假设 content 可以存 fileUrl.
-        }
+          messageType: isImage ? "IMAGE" : "FILE",
+          content: isImage ? fileData.fileUrl : "",
+          clientMessageId,
+        },
+      };
+
+      if (!isImage) {
+        msg.data.content = JSON.stringify({
+          url: fileData.fileUrl,
+          name: fileData.fileName,
+          size: fileData.fileSize,
+        });
       }
-      // 实际上，文件上传后，后端应该已经保存了？ No, upload just returns URL.
-      // Need to send message via WS with file info.
-      // But ChatEndpoint expects "content".
-      // Let's modify ChatEndpoint to handle extra fields if needed, OR put JSON in content.
-      // Putting JSON in content for FILE type is easier.
-      
-      const contentJson = JSON.stringify({
-        url: fileData.fileUrl,
-        name: fileData.fileName,
-        size: fileData.fileSize
-      })
-      
-      msg.data.content = contentJson
-      msg.data.messageType = 'FILE'
-      msg.data.clientMessageId = clientMessageId
-      
-      ws.send(msg)
+
+      ws.send(msg);
 
       messages.value.push({
         id: Date.now(),
         senderId: currentUserId,
         receiverId: currentFriendId.value,
-        content: fileData.fileName,
-        messageType: 'FILE',
-        fileUrl: fileData.fileUrl,
-        fileName: fileData.fileName,
-        fileSize: fileData.fileSize,
+        content: isImage ? fileData.fileUrl : fileData.fileName,
+        messageType: isImage ? "IMAGE" : "FILE",
+        fileUrl: isImage ? null : fileData.fileUrl,
+        fileName: isImage ? null : fileData.fileName,
+        fileSize: isImage ? null : fileData.fileSize,
         clientMessageId,
-        createdAt: new Date().toISOString()
-      })
-      scrollToBottom()
+        createdAt: new Date().toISOString(),
+      });
+      scrollToBottom();
     }
   } catch (e) {
-    ElMessage.error('上传失败')
+    ElMessage.error("上传失败");
   }
-}
+};
 
 const handleMessageAck = (data) => {
-  if (!data) return
-  const clientMessageId = data.clientMessageId
-  if (!clientMessageId) return
-  const serverMessageId = data.serverMessageId
-  if (!serverMessageId) return
+  if (!data) return;
+  const clientMessageId = data.clientMessageId;
+  if (!clientMessageId) return;
+  const serverMessageId = data.serverMessageId;
+  if (!serverMessageId) return;
 
-  const msg = messages.value.find(m => m.clientMessageId === clientMessageId)
+  const msg = messages.value.find((m) => m.clientMessageId === clientMessageId);
   if (msg) {
-    msg.id = serverMessageId
+    msg.id = serverMessageId;
   }
-}
+};
 
 const handleReadReceipt = (data) => {
-  if (!data || !data.messageIds) return
-  const ids = Array.isArray(data.messageIds) ? data.messageIds : []
-  if (!ids.length) return
-  const idSet = new Set(ids.map(String))
-  messages.value.forEach(m => {
+  if (!data || !data.messageIds) return;
+  const ids = Array.isArray(data.messageIds) ? data.messageIds : [];
+  if (!ids.length) return;
+  const idSet = new Set(ids.map(String));
+  messages.value.forEach((m) => {
     if (m.id != null && idSet.has(String(m.id))) {
-      m.isRead = true
+      m.isRead = true;
     }
-  })
-}
+  });
+};
 
 const scrollToBottom = () => {
   nextTick(() => {
     if (messageBox.value) {
-      messageBox.value.scrollTop = messageBox.value.scrollHeight
+      messageBox.value.scrollTop = messageBox.value.scrollHeight;
     }
-  })
-}
+  });
+};
 
 const formatTime = (time) => {
-  if (!time) return ''
-  const date = new Date(time)
-  return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`
-}
+  if (!time) return "";
+  const date = new Date(time);
+  return `${date.getHours()}:${date.getMinutes().toString().padStart(2, "0")}`;
+};
 
 watch(
   () => route.query?.friendId,
   () => {
-    trySelectConversationFromRoute()
+    trySelectConversationFromRoute();
   },
   { immediate: true }
-)
+);
 
 onMounted(() => {
-  fetchConversations()
-  request.get('/user/profile').then(res => {
-      if(res.code === 200) currentUserAvatar.value = res.data.avatarUrl
-  })
-})
+  fetchConversations();
+  request.get("/user/profile").then((res) => {
+    if (res.code === 200) currentUserAvatar.value = res.data.avatarUrl;
+  });
+  window.addEventListener("profile-updated", handleProfileUpdated);
+});
+
+const handleProfileUpdated = (e) => {
+  const detail = e && e.detail ? e.detail : null;
+  if (detail && detail.avatarUrl) currentUserAvatar.value = detail.avatarUrl;
+};
+
+onBeforeUnmount(() => {
+  window.removeEventListener("profile-updated", handleProfileUpdated);
+});
 </script>
 
 <style scoped>
@@ -490,7 +535,8 @@ onMounted(() => {
   cursor: pointer;
 }
 
-.conversation-item:hover, .conversation-item.active {
+.conversation-item:hover,
+.conversation-item.active {
   background-color: #f5f5f5;
 }
 
@@ -551,10 +597,11 @@ onMounted(() => {
 .message-item {
   display: flex;
   margin-bottom: 20px;
+  align-items: flex-start;
 }
 
 .message-item.self {
-  flex-direction: row-reverse;
+  justify-content: flex-end;
 }
 
 .message-content {
@@ -568,6 +615,37 @@ onMounted(() => {
 
 .message-item.self .message-content {
   background-color: #95ec69;
+}
+
+.message-content .image :deep(.el-image) {
+  max-width: 240px;
+  border-radius: 6px;
+}
+
+.message-content .file .file-card {
+  max-width: 240px;
+  padding: 8px 10px;
+  border: 1px solid #e6e6e6;
+  border-radius: 8px;
+  background: #f7f7f7;
+}
+
+.message-content .file .file-name {
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-content .file .file-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+}
+
+.message-item.self .message-content .file .file-card {
+  background: rgba(255, 255, 255, 0.35);
+  border-color: rgba(0, 0, 0, 0.08);
 }
 
 .chat-input {

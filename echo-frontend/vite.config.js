@@ -23,6 +23,10 @@ export default defineConfig({
           return path.replace("/api", "");
         },
       },
+      "/upload": {
+        target: "http://localhost:8088",
+        changeOrigin: true,
+      },
       // WebSocket 代理
       "/ws": {
         target: "ws://localhost:8088",

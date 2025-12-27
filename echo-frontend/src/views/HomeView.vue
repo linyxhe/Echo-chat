@@ -2,7 +2,7 @@
   <div class="home-container">
     <div class="sidebar">
       <div class="avatar-container">
-        <el-avatar :size="50" :src="userInfo.avatar || defaultAvatar" />
+        <el-avatar :size="50" :src="resolveUploadUrl(userInfo.avatarUrl) || defaultAvatar" />
       </div>
       <div class="menu">
         <div
@@ -47,7 +47,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import {
   ChatDotRound,
@@ -57,7 +57,7 @@ import {
   SwitchButton,
 } from "@element-plus/icons-vue";
 import defaultAvatar from "@/img/avatar/Member001.jpg";
-import request from "@/util/request";
+import request, { resolveUploadUrl } from "@/util/request";
 
 const router = useRouter();
 const route = useRoute();
@@ -94,6 +94,15 @@ const fetchUserInfo = async () => {
 
 onMounted(() => {
   fetchUserInfo();
+  window.addEventListener("profile-updated", handleProfileUpdated);
+});
+
+const handleProfileUpdated = (e) => {
+  if (e && e.detail) userInfo.value = { ...userInfo.value, ...e.detail };
+};
+
+onBeforeUnmount(() => {
+  window.removeEventListener("profile-updated", handleProfileUpdated);
 });
 </script>
 

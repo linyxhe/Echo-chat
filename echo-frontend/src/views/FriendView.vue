@@ -7,7 +7,7 @@
         </div>
         <div class="friend-list">
           <div v-for="friend in filteredFriends" :key="friend.id" class="friend-item">
-            <el-avatar :src="friend.avatar || defaultAvatar" />
+            <el-avatar :src="resolveUploadUrl(friend.avatar) || defaultAvatar" />
             <div class="friend-info">
               <div class="name">{{ friend.remark || friend.nickname }}</div>
               <div class="nickname" v-if="friend.remark">昵称: {{ friend.nickname }}</div>
@@ -22,7 +22,7 @@
       <el-tab-pane label="新的朋友" name="requests">
         <div class="request-list">
           <div v-for="req in requests" :key="req.id" class="request-item">
-            <el-avatar :src="req.avatar || defaultAvatar" />
+            <el-avatar :src="resolveUploadUrl(req.avatar) || defaultAvatar" />
             <div class="request-info">
               <div class="name">{{ req.nickname }}</div>
               <div class="msg">验证信息: {{ req.remark }}</div>
@@ -48,7 +48,7 @@
           </el-input>
           <div class="user-list">
             <div v-for="user in searchResults" :key="user.id" class="user-item">
-              <el-avatar :src="user.avatarUrl || defaultAvatar" />
+              <el-avatar :src="resolveUploadUrl(user.avatarUrl) || defaultAvatar" />
               <div class="user-info">
                 <div class="name">{{ user.nickname }}</div>
                 <div class="username">@{{ user.username }}</div>
@@ -76,7 +76,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import request from '@/util/request'
+import request, { resolveUploadUrl } from '@/util/request'
 import defaultAvatar from '@/img/avatar/Member001.jpg'
 
 const router = useRouter()
