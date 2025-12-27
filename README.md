@@ -41,113 +41,12 @@
 ## 三、数据库设计
 
 ### 3.1 用户表 (user)
-```sql
-CREATE TABLE `user` (
-  `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '用户ID',
-  `username` VARCHAR(50) UNIQUE NOT NULL COMMENT '用户名',
-  `nickname` VARCHAR(50) NOT NULL COMMENT '昵称',
-  `password_hash` VARCHAR(255) NOT NULL COMMENT '加密密码',
-  `email` VARCHAR(100) UNIQUE NOT NULL COMMENT '邮箱',
-  `email_verified` BOOLEAN DEFAULT FALSE COMMENT '邮箱验证状态',
-  `avatar_url` VARCHAR(500) COMMENT '头像URL',
-  `status` TINYINT DEFAULT 1 COMMENT '状态：0-禁用 1-正常 2-封禁',
-  `role` ENUM('USER', 'ADMIN') DEFAULT 'USER' COMMENT '角色',
-  `last_login_at` DATETIME COMMENT '最后登录时间',
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-```
-
 ### 3.2 好友关系表 (friendship)
-```sql
-CREATE TABLE `friendship` (
-  `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
-  `user_id` BIGINT NOT NULL COMMENT '用户ID',
-  `friend_id` BIGINT NOT NULL COMMENT '好友ID',
-  `remark` VARCHAR(50) COMMENT '好友备注',
-  `status` TINYINT DEFAULT 1 COMMENT '状态：0-删除 1-正常',
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY `uk_user_friend` (`user_id`, `friend_id`),
-  FOREIGN KEY (`user_id`) REFERENCES `user`(`id`),
-  FOREIGN KEY (`friend_id`) REFERENCES `user`(`id`)
-);
-```
-
 ### 3.3 消息表 (message)
-```sql
-CREATE TABLE `message` (
-  `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
-  `sender_id` BIGINT NOT NULL COMMENT '发送者ID',
-  `receiver_id` BIGINT NOT NULL COMMENT '接收者ID',
-  `content` TEXT COMMENT '消息内容',
-  `message_type` ENUM('TEXT', 'IMAGE', 'FILE', 'SYSTEM') DEFAULT 'TEXT',
-  `file_url` VARCHAR(500) COMMENT '文件URL',
-  `file_name` VARCHAR(255) COMMENT '文件名',
-  `file_size` BIGINT COMMENT '文件大小',
-  `is_read` BOOLEAN DEFAULT FALSE COMMENT '是否已读',
-  `deleted_by_sender` BOOLEAN DEFAULT FALSE,
-  `deleted_by_receiver` BOOLEAN DEFAULT FALSE,
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-  INDEX `idx_conversation` (`sender_id`, `receiver_id`, `created_at`),
-  INDEX `idx_unread` (`receiver_id`, `is_read`)
-);
-```
-
 ### 3.4 聊天会话表 (conversation)
-```sql
-CREATE TABLE `conversation` (
-  `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
-  `user1_id` BIGINT NOT NULL,
-  `user2_id` BIGINT NOT NULL,
-  `last_message_id` BIGINT COMMENT '最后一条消息ID',
-  `unread_count` INT DEFAULT 0 COMMENT '未读消息数',
-  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY `uk_user_pair` (`user1_id`, `user2_id`)
-);
-```
-
 ### 3.5 用户动态表 (post)
-```sql
-CREATE TABLE `post` (
-  `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
-  `user_id` BIGINT NOT NULL,
-  `content` TEXT NOT NULL,
-  `media_urls` JSON COMMENT '媒体文件URL数组',
-  `visibility` ENUM('PUBLIC', 'FRIENDS', 'PRIVATE') DEFAULT 'PUBLIC',
-  `like_count` INT DEFAULT 0,
-  `comment_count` INT DEFAULT 0,
-  `status` TINYINT DEFAULT 1 COMMENT '状态：0-删除 1-正常',
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-  INDEX `idx_user_timeline` (`user_id`, `created_at`)
-);
-```
-
 ### 3.6 举报记录表 (report)
-```sql
-CREATE TABLE `report` (
-  `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
-  `reporter_id` BIGINT NOT NULL COMMENT '举报人ID',
-  `reported_user_id` BIGINT NOT NULL COMMENT '被举报用户ID',
-  `report_type` ENUM('HARASSMENT', 'SPAM', 'FRAUD', 'OTHER') COMMENT '举报类型',
-  `description` TEXT COMMENT '举报描述',
-  `evidence` JSON COMMENT '证据（消息ID等）',
-  `status` ENUM('PENDING', 'PROCESSED', 'DISMISSED') DEFAULT 'PENDING',
-  `admin_id` BIGINT COMMENT '处理管理员ID',
-  `processed_at` DATETIME,
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-```
-
 ### 3.7 系统配置表 (system_config)
-```sql
-CREATE TABLE `system_config` (
-  `id` INT PRIMARY KEY AUTO_INCREMENT,
-  `config_key` VARCHAR(100) UNIQUE NOT NULL,
-  `config_value` TEXT,
-  `description` VARCHAR(255),
-  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-```
 
 ## 四、功能模块详细设计
 
