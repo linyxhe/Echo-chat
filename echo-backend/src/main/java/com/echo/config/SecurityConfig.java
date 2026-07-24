@@ -12,6 +12,11 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 /**
  * Spring Security配置类
@@ -39,12 +44,16 @@ public class SecurityConfig {
         http
                 // 禁用CSRF保护，因为我们使用JWT认证
                 .csrf(csrf -> csrf.disable())
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 // 设置会话管理为无状态（STATELESS），因为JWT是无状态的
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 // 配置URL访问规则
                 .authorizeHttpRequests(auth -> auth
                         // 允许匿名访问的URL
                         .requestMatchers("/auth/**", "/admin/login", "/ws/**", "/upload/**", "/error").permitAll()
+                        // 放行前端静态资源（后端直接托管 dist 时，未登录用户也需加载登录页/JS/CSS）
+                        .requestMatchers("/", "/index.html", "/config.js", "/favicon.ico",
+                                "/assets/**", "/css/**", "/js/**", "/img/**", "/fonts/**").permitAll()
                         // 其他所有请求需要认证
                         .anyRequest().authenticated()
                 );
@@ -61,5 +70,23 @@ public class SecurityConfig {
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
         return authenticationConfiguration.getAuthenticationManager();
+    }
+
+    /**
+     * CORS 配置
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(List.of("*", "null"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+        config.setAllowedHeaders(List.of("*"));
+        config.setExposedHeaders(List.of("Authorization"));
+        config.setAllowCredentials(false);
+        config.setMaxAge(3600L);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
     }
 }

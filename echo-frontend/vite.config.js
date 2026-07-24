@@ -5,6 +5,7 @@ import vue from "@vitejs/plugin-vue";
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: "./",   // 相对路径打包，天然适配子路径 /echo-chat/
   plugins: [vue()],
   resolve: {
     alias: {

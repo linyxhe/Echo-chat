@@ -4,6 +4,7 @@ import com.echo.service.ChatService;
 import com.echo.vo.Result;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -29,6 +30,10 @@ class OnlineChatRoomApplicationTests {
 
     @LocalServerPort
     private int port;
+
+    // 读取应用上下文路径（默认空）。设了 CONTEXT_PATH=/echo-chat 时，HTTP 请求需带上前缀。
+    @Value("${server.servlet.context-path:}")
+    private String contextPath;
 
     @Test
     void contextLoads() {
@@ -67,7 +72,7 @@ class OnlineChatRoomApplicationTests {
         Files.writeString(filePath, "ok", StandardCharsets.UTF_8);
 
         try {
-            ResponseEntity<String> resp = restTemplate.getForEntity("http://localhost:" + port + "/upload/" + fileName, String.class);
+            ResponseEntity<String> resp = restTemplate.getForEntity("http://localhost:" + port + contextPath + "/upload/" + fileName, String.class);
             assertEquals(200, resp.getStatusCode().value());
             assertEquals("ok", resp.getBody());
         } finally {
