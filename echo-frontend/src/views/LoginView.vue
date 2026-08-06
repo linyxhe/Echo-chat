@@ -1,19 +1,29 @@
 <template>
   <div class="login-container">
     <el-card class="login-card">
-      <h2>Echo 聊天室登录</h2>
+      <h2>Echo 聊天登录</h2>
       <el-form :model="loginForm" :rules="rules" ref="loginFormRef" label-width="80px">
+        <el-alert
+          title="如忘记密码请联系管理员重置，默认密码为：123456"
+          type="info"
+          show-icon
+          :closable="false"
+          style="margin-bottom: 20px"
+        />
         <el-form-item label="账号" prop="username">
           <el-input
             v-model="loginForm.username"
             placeholder="请输入用户名或邮箱"
+            @keyup.enter="handleLogin"
           ></el-input>
         </el-form-item>
         <el-form-item label="密码" prop="password">
           <el-input
             type="password"
+            show-password
             v-model="loginForm.password"
             placeholder="请输入密码"
+            @keyup.enter="handleLogin"
           ></el-input>
         </el-form-item>
         <el-form-item>
@@ -21,6 +31,9 @@
             >登录</el-button
           >
           <el-button @click="$router.push('/register')">去注册</el-button>
+          <el-button link type="primary" @click="$router.push('/admin/login')"
+            >管理员登录</el-button
+          >
         </el-form-item>
       </el-form>
     </el-card>
@@ -28,7 +41,7 @@
 </template>
 
 <script setup>
-import { ref, reactive } from "vue";
+import { ref, reactive, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import request from "@/util/request";
@@ -36,6 +49,7 @@ import request from "@/util/request";
 const router = useRouter();
 const loginFormRef = ref(null);
 const loading = ref(false);
+const tokenTtlMs = 24 * 60 * 60 * 1000;
 
 const loginForm = reactive({
   username: "",
@@ -57,6 +71,7 @@ const handleLogin = async () => {
         if (res.code === 200) {
           ElMessage.success("登录成功");
           localStorage.setItem("token", res.data.token);
+          localStorage.setItem("tokenExpiresAt", String(Date.now() + tokenTtlMs));
           localStorage.setItem("userId", res.data.userId);
           localStorage.setItem("username", res.data.username);
           router.push("/home/chat");
@@ -72,6 +87,15 @@ const handleLogin = async () => {
     }
   });
 };
+
+onMounted(() => {
+  const token = localStorage.getItem("token");
+  const expiresAtRaw = localStorage.getItem("tokenExpiresAt");
+  const expiresAt = expiresAtRaw ? Number(expiresAtRaw) : 0;
+  if (token && expiresAt && Date.now() < expiresAt) {
+    router.push("/home/chat");
+  }
+});
 </script>
 
 <style scoped>

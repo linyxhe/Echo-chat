@@ -37,6 +37,9 @@ public class ChatServiceImpl extends ServiceImpl<MessageMapper, Message> impleme
     
     @Autowired
     private UserMapper userMapper;
+    
+    @Autowired
+    private com.echo.mapper.FriendshipMapper friendshipMapper;
 
     @Value("${server.port}")
     private String serverPort;
@@ -122,6 +125,32 @@ public class ChatServiceImpl extends ServiceImpl<MessageMapper, Message> impleme
     public Result<Object> uploadFile(MultipartFile file, Long receiverId) {
         if (file.isEmpty()) {
             return Result.fail("文件为空");
+        }
+        
+        // 如果 receiverId > 0，则进行好友关系校验（聊天文件）
+        if (receiverId != null && receiverId > 0) {
+            try {
+                org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+                Long currentUserId = null;
+                if (auth != null && auth.getName() != null) {
+                    com.echo.pojo.User me = userMapper.selectOne(new QueryWrapper<com.echo.pojo.User>().eq("username", auth.getName()));
+                    if (me != null) currentUserId = me.getId();
+                }
+
+                if (currentUserId != null) {
+                    final Long finalCurrentUserId = currentUserId;
+                    QueryWrapper<com.echo.pojo.Friendship> query = new QueryWrapper<>();
+                    query.and(w -> w
+                        .nested(i -> i.eq("user_id", finalCurrentUserId).eq("friend_id", receiverId))
+                        .or()
+                        .nested(i -> i.eq("user_id", receiverId).eq("friend_id", finalCurrentUserId))
+                    ).eq("status", 1);
+                    
+                    if (friendshipMapper.selectCount(query) == 0) {
+                        return Result.fail("未添加该好友，请先添加后再发送文件");
+                    }
+                }
+            } catch (Exception ignored) {}
         }
         
         try {

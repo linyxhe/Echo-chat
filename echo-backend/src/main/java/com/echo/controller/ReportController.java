@@ -28,7 +28,7 @@ public class ReportController {
         Long currentUserId = getCurrentUserId();
         if (currentUserId == null) return Result.fail("未登录");
         
-        if (report.getReportType() == null || report.getReportedUserId() == null) {
+        if (report.getTargetType() == null || report.getTargetId() == null) {
             return Result.fail("举报目标不能为空");
         }
         

@@ -34,9 +34,26 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
     
     @Autowired
     private FriendshipMapper friendshipMapper;
+    
+    @Autowired
+    private SystemConfigMapper systemConfigMapper;
 
     @Override
     public Result<Object> createPost(Long userId, Post post) {
+        // 敏感词过滤
+        QueryWrapper<SystemConfig> configQuery = new QueryWrapper<>();
+        configQuery.eq("config_key", "sensitive.words");
+        SystemConfig config = systemConfigMapper.selectOne(configQuery);
+        
+        if (config != null && config.getConfigValue() != null) {
+            String[] words = config.getConfigValue().split(",");
+            for (String word : words) {
+                if (org.springframework.util.StringUtils.hasText(word) && post.getContent().contains(word.trim())) {
+                    return Result.fail("内容包含敏感词: " + word);
+                }
+            }
+        }
+        
         post.setUserId(userId);
         post.setLikeCount(0);
         post.setCommentCount(0);
@@ -56,7 +73,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
     public Result<Object> getPosts(Long currentUserId, Long targetUserId, String type, Integer page, Integer size) {
         Page<Post> pageParam = new Page<>(page, size);
         QueryWrapper<Post> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("status", 1);
+        // 移除 queryWrapper.eq("status", 1); 以便前端能接收到状态为 0 的帖子并显示为“已屏蔽”
+        // 但需要注意隐私逻辑
         
         if (targetUserId != null) {
             // 查看指定用户的动态
@@ -85,7 +103,12 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
                 friendIds.add(currentUserId); // 加上自己
                 
                 queryWrapper.in("user_id", friendIds);
-                queryWrapper.in("visibility", "PUBLIC", "FRIENDS");
+                // 修正：自己的动态可以看到所有（包括私密），好友的只能看公开和好友可见
+                queryWrapper.and(w -> w
+                    .eq("user_id", currentUserId)
+                    .or()
+                    .in("visibility", "PUBLIC", "FRIENDS")
+                );
             }
         }
         
@@ -98,6 +121,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
             map.put("id", post.getId());
             map.put("userId", post.getUserId());
             map.put("content", post.getContent());
+            map.put("status", post.getStatus()); // 增加 status 字段
             map.put("imageUrls", post.getMediaUrls());
             map.put("likeCount", post.getLikeCount());
             map.put("commentCount", post.getCommentCount());
@@ -230,7 +254,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
         }
         
         post.setStatus(0); // 逻辑删除
-        postMapper.updateById(post);
+        postMapper.deleteById(postId); // 硬删除
         
         return Result.success("删除成功");
     }

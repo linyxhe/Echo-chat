@@ -140,7 +140,8 @@ DROP TABLE IF EXISTS `report`;
 CREATE TABLE `report`  (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `reporter_id` bigint NOT NULL COMMENT '举报人ID',
-  `reported_user_id` bigint NOT NULL COMMENT '被举报用户ID',
+  `target_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'USER' COMMENT '目标类型: USER, POST',
+  `target_id` bigint NOT NULL COMMENT '目标ID',
   `report_type` enum('HARASSMENT','SPAM','FRAUD','OTHER') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL COMMENT '举报类型',
   `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL COMMENT '举报描述',
   `evidence` json NULL COMMENT '证据（消息ID等）',

@@ -1,6 +1,28 @@
 import { createRouter, createWebHashHistory } from "vue-router";
 import LoginView from "@/views/LoginView.vue";
 
+const clearAuthStorage = () => {
+  localStorage.removeItem("token");
+  localStorage.removeItem("tokenExpiresAt");
+  localStorage.removeItem("userId");
+  localStorage.removeItem("username");
+};
+
+const getValidToken = () => {
+  const token = localStorage.getItem("token");
+  if (!token) return "";
+
+  const expiresAtRaw = localStorage.getItem("tokenExpiresAt");
+  const expiresAt = expiresAtRaw ? Number(expiresAtRaw) : 0;
+  if (!expiresAt) return token;
+
+  if (Number.isNaN(expiresAt) || Date.now() >= expiresAt) {
+    clearAuthStorage();
+    return "";
+  }
+  return token;
+};
+
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
   routes: [
@@ -54,6 +76,7 @@ const router = createRouter({
       path: "/admin",
       name: "admin",
       component: () => import("../views/admin/AdminLayout.vue"),
+      redirect: "/admin/monitor",
       children: [
         {
           path: "users",
@@ -65,13 +88,29 @@ const router = createRouter({
           name: "admin-reports",
           component: () => import("../views/admin/ReportManagementView.vue"),
         },
+        {
+          path: "monitor",
+          name: "admin-monitor",
+          component: () => import("../views/admin/SystemMonitorView.vue"),
+        },
+        {
+          path: "config",
+          name: "admin-config",
+          component: () => import("../views/admin/SystemConfigView.vue"),
+        },
       ],
     },
   ],
 });
 
 router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem("token");
+  const token = getValidToken();
+
+  if (to.path === "/login" && token) {
+    next("/home/chat");
+    return;
+  }
+
   if (to.path.startsWith("/admin") && to.path !== "/admin/login") {
     // 简单检查
     next();

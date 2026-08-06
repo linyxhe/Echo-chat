@@ -1,28 +1,43 @@
 <template>
   <div class="register-container">
     <el-card class="register-card">
-      <h2>Echo 聊天室注册</h2>
+      <h2>Echo 聊天注册</h2>
       <el-form
         :model="registerForm"
         :rules="rules"
         ref="registerFormRef"
-        label-width="80px"
+        :label-width="isMobile ? 'auto' : '80px'"
+        :label-position="isMobile ? 'top' : 'right'"
       >
         <el-form-item label="用户名" prop="username">
-          <el-input v-model="registerForm.username" placeholder="请输入用户名"></el-input>
+          <el-input
+            v-model="registerForm.username"
+            placeholder="请输入用户名"
+            @keyup.enter="handleRegister"
+          ></el-input>
         </el-form-item>
         <el-form-item label="昵称" prop="nickname">
-          <el-input v-model="registerForm.nickname" placeholder="请输入昵称"></el-input>
+          <el-input
+            v-model="registerForm.nickname"
+            placeholder="请输入昵称"
+            @keyup.enter="handleRegister"
+          ></el-input>
         </el-form-item>
         <el-form-item label="密码" prop="password">
           <el-input
             type="password"
+            show-password
             v-model="registerForm.password"
             placeholder="请输入密码"
+            @keyup.enter="handleRegister"
           ></el-input>
         </el-form-item>
         <el-form-item label="邮箱" prop="email">
-          <el-input v-model="registerForm.email" placeholder="请输入邮箱">
+          <el-input
+            v-model="registerForm.email"
+            placeholder="请输入邮箱"
+            @keyup.enter="handleRegister"
+          >
             <template #append>
               <el-button @click="sendCaptcha" :disabled="captchaDisabled">{{
                 captchaBtnText
@@ -31,7 +46,11 @@
           </el-input>
         </el-form-item>
         <el-form-item label="验证码" prop="captcha">
-          <el-input v-model="registerForm.captcha" placeholder="请输入验证码"></el-input>
+          <el-input
+            v-model="registerForm.captcha"
+            placeholder="请输入验证码"
+            @keyup.enter="handleRegister"
+          ></el-input>
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleRegister" :loading="loading"
@@ -45,7 +64,7 @@
 </template>
 
 <script setup>
-import { ref, reactive } from "vue";
+import { ref, reactive, onMounted, onBeforeUnmount } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import request from "@/util/request";
@@ -55,6 +74,8 @@ const registerFormRef = ref(null);
 const loading = ref(false);
 const captchaDisabled = ref(false);
 const captchaBtnText = ref("发送验证码");
+const isMobile = ref(false);
+let mql;
 
 const registerForm = reactive({
   username: "",
@@ -80,6 +101,15 @@ const sendCaptcha = async () => {
     ElMessage.warning("请先输入邮箱");
     return;
   }
+  // 简单校验邮箱格式
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(registerForm.email)) {
+    ElMessage.warning("邮箱格式不正确");
+    return;
+  }
+
+  captchaDisabled.value = true;
+  captchaBtnText.value = "发送中...";
 
   try {
     const res = await request.post("/auth/captcha/send", {
@@ -87,13 +117,18 @@ const sendCaptcha = async () => {
       type: "REGISTER",
     });
     if (res.code === 200) {
-      ElMessage.success("验证码发送成功");
+      ElMessage.success("验证码发送成功，请查收邮件");
       startCountDown();
     } else {
-      ElMessage.error(res.message || "发送失败");
+      ElMessage.error(res.message || "发送失败，请稍后重试");
+      captchaDisabled.value = false;
+      captchaBtnText.value = "发送验证码";
     }
   } catch (error) {
-    ElMessage.error("发送请求出错");
+    console.error("Captcha send error:", error);
+    ElMessage.error(error.message || "网络请求失败，请检查网络连接");
+    captchaDisabled.value = false;
+    captchaBtnText.value = "发送验证码";
   }
 };
 
@@ -135,6 +170,20 @@ const handleRegister = async () => {
     }
   });
 };
+
+const applyMobileLayout = () => {
+  isMobile.value = Boolean(mql && mql.matches);
+};
+
+onMounted(() => {
+  mql = window.matchMedia("(max-width: 768px)");
+  applyMobileLayout();
+  mql.addEventListener("change", applyMobileLayout);
+});
+
+onBeforeUnmount(() => {
+  if (mql) mql.removeEventListener("change", applyMobileLayout);
+});
 </script>
 
 <style scoped>
@@ -142,16 +191,26 @@ const handleRegister = async () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100vh;
+  min-height: 100vh;
+  padding: 16px;
+  box-sizing: border-box;
   background-image: url("@/img/login_bg.jpg");
   background-size: cover;
+  background-position: center;
 }
 .register-card {
-  width: 500px;
+  width: 100%;
+  max-width: 500px;
   background: rgba(255, 255, 255, 0.9);
 }
 h2 {
   text-align: center;
   margin-bottom: 20px;
+}
+
+@media (max-width: 768px) {
+  h2 {
+    margin-bottom: 16px;
+  }
 }
 </style>

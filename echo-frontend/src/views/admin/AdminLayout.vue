@@ -1,8 +1,39 @@
 <template>
   <div class="admin-layout">
     <div class="sidebar">
-      <div class="menu-item" @click="$router.push('/admin/users')">用户管理</div>
-      <div class="menu-item" @click="$router.push('/admin/reports')">举报处理</div>
+      <div class="logo">Echo Admin</div>
+      <div
+        class="menu-item"
+        :class="{ active: route.path === '/admin/monitor' }"
+        @click="$router.push('/admin/monitor')"
+      >
+        <el-icon><Monitor /></el-icon> 系统监控
+      </div>
+      <div
+        class="menu-item"
+        :class="{ active: route.path === '/admin/users' }"
+        @click="$router.push('/admin/users')"
+      >
+        <el-icon><User /></el-icon> 用户管理
+      </div>
+      <div
+        class="menu-item"
+        :class="{ active: route.path === '/admin/reports' }"
+        @click="$router.push('/admin/reports')"
+      >
+        <el-icon><Warning /></el-icon> 内容审核
+      </div>
+      <div
+        class="menu-item"
+        :class="{ active: route.path === '/admin/config' }"
+        @click="$router.push('/admin/config')"
+      >
+        <el-icon><Setting /></el-icon> 系统配置
+      </div>
+
+      <div class="logout-btn" @click="handleLogout">
+        <el-icon><SwitchButton /></el-icon> 退出登录
+      </div>
     </div>
     <div class="content">
       <router-view />
@@ -10,25 +41,87 @@
   </div>
 </template>
 
+<script setup>
+import { useRoute, useRouter } from "vue-router";
+import { Monitor, User, Warning, Setting, SwitchButton } from "@element-plus/icons-vue";
+import { ElMessageBox } from "element-plus";
+
+const route = useRoute();
+const router = useRouter();
+
+const handleLogout = () => {
+  ElMessageBox.confirm("确定要退出登录吗？", "提示", {
+    confirmButtonText: "确定",
+    cancelButtonText: "取消",
+    type: "warning",
+  }).then(() => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("userId");
+    localStorage.removeItem("username");
+    router.push("/admin/login");
+  });
+};
+</script>
+
 <style scoped>
 .admin-layout {
   display: flex;
   height: 100vh;
+  background-color: #f5f5f5; /* 与用户端一致的背景色 */
 }
 .sidebar {
-  width: 200px;
-  background-color: #333;
+  width: 220px;
+  background-color: white; /* 侧边栏改为白色 */
+  color: #333; /* 文字颜色改为深色 */
+  display: flex;
+  flex-direction: column;
+  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.1);
+  border-right: 1px solid #e6e6e6;
+}
+.logo {
+  height: 60px;
+  line-height: 60px;
+  text-align: center;
+  font-size: 20px;
+  font-weight: bold;
+  background-color: #409eff; /* 使用 Element Plus 主色 */
   color: white;
+  margin-bottom: 20px;
 }
 .menu-item {
-  padding: 20px;
+  padding: 15px 20px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.3s;
+  color: #606266;
 }
 .menu-item:hover {
-  background-color: #444;
+  color: #409eff;
+  background-color: #ecf5ff;
+}
+.menu-item.active {
+  color: #409eff;
+  background-color: #ecf5ff;
+  border-right: 3px solid #409eff;
+}
+.logout-btn {
+  margin-top: auto;
+  padding: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid #e6e6e6;
+  color: #f56c6c;
+}
+.logout-btn:hover {
+  background-color: #fef0f0;
 }
 .content {
   flex: 1;
   padding: 20px;
+  overflow: auto;
 }
 </style>

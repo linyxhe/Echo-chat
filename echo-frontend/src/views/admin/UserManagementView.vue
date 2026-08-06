@@ -28,13 +28,16 @@
           <el-select
             v-model="row.status"
             size="small"
-            style="width: 120px"
+            style="width: 100px; margin-right: 10px"
             @change="(val) => updateStatus(row.id, val)"
           >
             <el-option :value="1" label="正常" />
             <el-option :value="0" label="禁用" />
             <el-option :value="2" label="封禁" />
           </el-select>
+          <el-button size="small" type="warning" @click="resetPassword(row)"
+            >重置密码</el-button
+          >
         </template>
       </el-table-column>
     </el-table>
@@ -52,59 +55,82 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import request from '@/util/request'
-import { ElMessage } from 'element-plus'
+import { ref, onMounted } from "vue";
+import request from "@/util/request";
+import { ElMessage, ElMessageBox } from "element-plus";
 
-const keyword = ref('')
-const users = ref([])
-const loading = ref(false)
-const page = ref(1)
-const size = ref(20)
-const total = ref(0)
+const keyword = ref("");
+const users = ref([]);
+const loading = ref(false);
+const page = ref(1);
+const size = ref(20);
+const total = ref(0);
 
 const fetchUsers = async () => {
-  loading.value = true
+  loading.value = true;
   try {
-    const res = await request.get('/admin/users', {
+    const res = await request.get("/admin/users", {
       params: {
         username: keyword.value || undefined,
         page: page.value,
-        size: size.value
-      }
-    })
+        size: size.value,
+      },
+    });
     if (res.code === 200) {
-      users.value = res.data.records || []
-      total.value = res.data.total || 0
+      users.value = res.data.records || [];
+      total.value = res.data.total || 0;
     } else {
-      ElMessage.error(res.message || '获取用户失败')
+      ElMessage.error(res.message || "获取用户失败");
     }
   } catch (e) {
-    ElMessage.error('获取用户失败')
+    ElMessage.error("获取用户失败");
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-}
+};
 
 const updateStatus = async (userId, status) => {
   try {
-    const res = await request.put(`/admin/users/${userId}/status`, { status })
+    const res = await request.put(`/admin/users/${userId}/status`, { status });
     if (res.code === 200) {
-      ElMessage.success('操作成功')
-      fetchUsers()
+      ElMessage.success("操作成功");
+      fetchUsers();
     } else {
-      ElMessage.error(res.message || '操作失败')
-      fetchUsers()
+      ElMessage.error(res.message || "操作失败");
+      fetchUsers();
     }
   } catch (e) {
-    ElMessage.error('操作失败')
-    fetchUsers()
+    ElMessage.error("操作失败");
+    fetchUsers();
   }
-}
+};
+
+const resetPassword = (user) => {
+  ElMessageBox.confirm(
+    `确定要重置用户 "${user.username}" 的密码为 123456 吗？`,
+    "重置密码",
+    {
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+      type: "warning",
+    }
+  ).then(async () => {
+    try {
+      const res = await request.put(`/admin/users/${user.id}/reset-password`);
+      if (res.code === 200) {
+        ElMessage.success("密码重置成功");
+      } else {
+        ElMessage.error(res.message || "重置失败");
+      }
+    } catch (e) {
+      ElMessage.error("重置失败");
+    }
+  });
+};
 
 onMounted(() => {
-  fetchUsers()
-})
+  fetchUsers();
+});
 </script>
 
 <style scoped>
@@ -119,4 +145,3 @@ onMounted(() => {
   margin-top: 12px;
 }
 </style>
-

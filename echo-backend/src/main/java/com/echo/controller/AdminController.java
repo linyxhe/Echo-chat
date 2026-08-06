@@ -7,6 +7,8 @@ import com.echo.mapper.ReportMapper;
 import com.echo.mapper.UserMapper;
 import com.echo.pojo.Report;
 import com.echo.pojo.User;
+import com.echo.pojo.Post;
+import com.echo.mapper.PostMapper;
 import com.echo.service.UserService;
 import com.echo.vo.Result;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +31,12 @@ public class AdminController {
     
     @Autowired
     private ReportMapper reportMapper;
+
+    @Autowired
+    private PostMapper postMapper;
+    
+    @Autowired
+    private org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
 
     /**
      * 管理员登录
@@ -118,6 +126,14 @@ public class AdminController {
         
         if ("PROCESS".equals(action)) {
             report.setStatus("PROCESSED");
+            // 如果是举报帖子，封禁帖子
+            if ("POST".equals(report.getTargetType()) && report.getTargetId() != null) {
+                Post post = postMapper.selectById(report.getTargetId());
+                if (post != null) {
+                    post.setStatus(0); // 逻辑删除
+                    postMapper.updateById(post);
+                }
+            }
         } else {
             report.setStatus("DISMISSED");
         }
@@ -128,6 +144,23 @@ public class AdminController {
         reportMapper.updateById(report);
         
         return Result.success("处理成功");
+    }
+
+    /**
+     * 重置用户密码
+     */
+    @PutMapping("/users/{userId}/reset-password")
+    public Result<Object> resetUserPassword(@PathVariable Long userId) {
+        if (!isAdmin()) return Result.fail("无权限");
+        
+        User user = userMapper.selectById(userId);
+        if (user == null) return Result.fail("用户不存在");
+        
+        user.setPasswordHash(passwordEncoder.encode("123456"));
+        user.setUpdatedAt(LocalDateTime.now());
+        userMapper.updateById(user);
+        
+        return Result.success("密码已重置为 123456");
     }
 
     private Long getCurrentUserId() {

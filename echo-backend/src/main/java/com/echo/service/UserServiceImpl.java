@@ -199,7 +199,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(mailFrom);
         message.setTo(email);
-        message.setSubject("Echo聊天室验证码");
+        message.setSubject("Echo聊天验证码");
         message.setText("您的验证码是：" + captcha + "，有效期5分钟。");
         
         try {

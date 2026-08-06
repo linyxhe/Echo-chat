@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -36,6 +37,8 @@ public class ChatEndpoint {
     private static MessageMapper messageMapper;
     private static JwtUtil jwtUtil;
     private static ConversationMapper conversationMapper;
+    private static com.echo.mapper.UserMapper userMapper;
+    private static com.echo.mapper.FriendshipMapper friendshipMapper;
     
     @Autowired
     public void setMessageMapper(MessageMapper messageMapper) {
@@ -50,6 +53,16 @@ public class ChatEndpoint {
     @Autowired
     public void setConversationMapper(ConversationMapper conversationMapper) {
         ChatEndpoint.conversationMapper = conversationMapper;
+    }
+
+    @Autowired
+    public void setUserMapper(com.echo.mapper.UserMapper userMapper) {
+        ChatEndpoint.userMapper = userMapper;
+    }
+    
+    @Autowired
+    public void setFriendshipMapper(com.echo.mapper.FriendshipMapper friendshipMapper) {
+        ChatEndpoint.friendshipMapper = friendshipMapper;
     }
 
     private Long userId;
@@ -78,20 +91,24 @@ public class ChatEndpoint {
             if (jwtUtil.validateToken(token)) {
                 Long userId = jwtUtil.getUserIdFromToken(token);
                 if (userId != null) {
-                    this.userId = userId;
-                    onlineUsers.put(userId, session);
-                    sessionUserIdMap.put(session, userId);
-                    
-                    // 广播用户上线通知
-                    broadcastUserOnline(userId);
-                    return;
+                    // 检查用户状态
+                    com.echo.pojo.User user = userMapper.selectById(userId);
+                    if (user != null && user.getStatus() == 1) { // 1: 正常
+                        this.userId = userId;
+                        onlineUsers.put(userId, session);
+                        sessionUserIdMap.put(session, userId);
+                        
+                        // 广播用户上线通知
+                        broadcastUserOnline(userId);
+                        return;
+                    }
                 }
             }
         }
         
-        // 如果验证失败，关闭连接
+        // 如果验证失败或用户状态异常，关闭连接
         try {
-            session.close(new CloseReason(CloseReason.CloseCodes.CANNOT_ACCEPT, "Authentication failed"));
+            session.close(new CloseReason(CloseReason.CloseCodes.CANNOT_ACCEPT, "Authentication failed or account disabled"));
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -148,6 +165,9 @@ public class ChatEndpoint {
                 case "MESSAGE_READ":
                     handleMessageRead(msgData, session);
                     break;
+                case "CALL_SIGNAL":
+                    handleCallSignal(msgData, session);
+                    break;
                 case "HEARTBEAT":
                     handleHeartbeat(session);
                     break;
@@ -159,6 +179,66 @@ public class ChatEndpoint {
             }
         } catch (Exception exception) {
             exception.printStackTrace();
+        }
+    }
+
+    private void handleCallSignal(Map<String, Object> msgData, Session session) {
+        Object dataObj = msgData.get("data");
+        if (!(dataObj instanceof Map<?, ?>)) return;
+        Map<?, ?> rawData = (Map<?, ?>) dataObj;
+
+        Object toUserIdObj = rawData.get("toUserId");
+        Object kindObj = rawData.get("kind");
+        if (toUserIdObj == null || kindObj == null) return;
+
+        Long toUserId;
+        try {
+            toUserId = Long.valueOf(String.valueOf(toUserIdObj));
+        } catch (Exception e) {
+            return;
+        }
+
+        String kind = String.valueOf(kindObj);
+        Object callIdObj = rawData.get("callId");
+        Object callTypeObj = rawData.get("callType");
+        Object payloadObj = rawData.get("payload");
+
+        System.out.println("CALL_SIGNAL from=" + this.userId + " to=" + toUserId + " kind=" + kind);
+
+        ResultMessage forward = new ResultMessage();
+        forward.setType("CALL_SIGNAL");
+
+        Map<String, Object> forwardData = new HashMap<>();
+        forwardData.put("fromUserId", this.userId);
+        forwardData.put("toUserId", toUserId);
+        forwardData.put("kind", kind);
+        if (callIdObj != null) forwardData.put("callId", callIdObj);
+        if (callTypeObj != null) forwardData.put("callType", callTypeObj);
+        forwardData.put("payload", payloadObj);
+        forward.setData(forwardData);
+
+        if (onlineUsers.containsKey(toUserId)) {
+            Session receiverSession = onlineUsers.get(toUserId);
+            try {
+                receiverSession.getBasicRemote().sendText(JSON.toJSONString(forward));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        } else {
+            ResultMessage offline = new ResultMessage();
+            offline.setType("CALL_SIGNAL");
+            Map<String, Object> offlineData = new HashMap<>();
+            offlineData.put("fromUserId", toUserId);
+            offlineData.put("toUserId", this.userId);
+            offlineData.put("kind", "OFFLINE");
+            if (callIdObj != null) offlineData.put("callId", callIdObj);
+            if (callTypeObj != null) offlineData.put("callType", callTypeObj);
+            offline.setData(offlineData);
+            try {
+                session.getBasicRemote().sendText(JSON.toJSONString(offline));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
     }
     
@@ -180,6 +260,29 @@ public class ChatEndpoint {
                 String messageType = String.valueOf(messageTypeObj);
                 String content = String.valueOf(contentObj);
                 String clientMessageId = clientMessageIdObj != null ? String.valueOf(clientMessageIdObj) : null;
+
+                // 好友关系校验
+                boolean isFriend = false;
+                if (friendshipMapper != null) {
+                    Long count = friendshipMapper.selectCount(
+                            new QueryWrapper<com.echo.pojo.Friendship>()
+                                    .eq("user_id", this.userId)
+                                    .eq("friend_id", receiverId)
+                                    .eq("status", 1)
+                    );
+                    isFriend = count != null && count > 0;
+                }
+                if (!isFriend) {
+                    ResultMessage ackMessage = new ResultMessage();
+                    ackMessage.setType("MESSAGE_ACK");
+                    Map<String, Object> ackData = new HashMap<>();
+                    ackData.put("clientMessageId", clientMessageId != null ? clientMessageId : "");
+                    ackData.put("status", "REJECTED_NOT_FRIEND");
+                    ackData.put("reason", "未添加该好友，请先添加后再发送");
+                    ackMessage.setData(ackData);
+                    session.getBasicRemote().sendText(JSON.toJSONString(ackMessage));
+                    return;
+                }
 
                 LocalDateTime now = LocalDateTime.now();
                 Message message = new Message();
@@ -397,9 +500,11 @@ public class ChatEndpoint {
     @OnClose
     public void onClose(Session session, CloseReason reason) {
         if (this.userId != null) {
-            onlineUsers.remove(this.userId);
             sessionUserIdMap.remove(session);
-            broadcastUserOffline(this.userId);
+            // 旧连接关闭时不能删除同一用户已经建立的新连接。
+            if (onlineUsers.remove(this.userId, session)) {
+                broadcastUserOffline(this.userId);
+            }
         }
     }
     
@@ -410,10 +515,17 @@ public class ChatEndpoint {
     public void onError(Session session, Throwable throwable) {
         Long userId = sessionUserIdMap.get(session);
         if (userId != null) {
-            onlineUsers.remove(userId);
             sessionUserIdMap.remove(session);
-            broadcastUserOffline(userId);
+            // 只有当前在线映射仍指向出错连接时，才广播下线。
+            if (onlineUsers.remove(userId, session)) {
+                broadcastUserOffline(userId);
+            }
         }
-        throwable.printStackTrace();
+        // EOFException 是客户端异常断开（关闭浏览器/网络中断）的正常现象，不需要打印堆栈
+        if (throwable instanceof EOFException) {
+            System.out.println("WebSocket客户端异常断开连接: userId=" + userId);
+        } else {
+            throwable.printStackTrace();
+        }
     }
 }

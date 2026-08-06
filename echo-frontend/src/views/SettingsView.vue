@@ -4,7 +4,10 @@
       <el-tab-pane label="基本资料">
         <el-form :model="userInfo" label-width="80px" class="settings-form">
           <el-form-item label="头像">
-            <el-avatar :size="80" :src="resolveUploadUrl(userInfo.avatarUrl) || defaultAvatar" />
+            <el-avatar
+              :size="80"
+              :src="resolveUploadUrl(userInfo.avatarUrl) || defaultAvatar"
+            />
             <el-upload
               class="avatar-uploader"
               action="#"
@@ -29,13 +32,25 @@
       <el-tab-pane label="安全设置">
         <el-form :model="passwordForm" label-width="80px" class="settings-form">
           <el-form-item label="旧密码">
-            <el-input type="password" v-model="passwordForm.oldPassword" />
+            <el-input
+              type="password"
+              show-password
+              v-model="passwordForm.oldPassword"
+              @keyup.enter="updatePassword"
+            />
           </el-form-item>
           <el-form-item label="新密码">
-            <el-input type="password" v-model="passwordForm.newPassword" />
+            <el-input
+              type="password"
+              show-password
+              v-model="passwordForm.newPassword"
+              @keyup.enter="updatePassword"
+            />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="updatePassword">修改密码</el-button>
+            <el-button type="primary" :loading="passwordLoading" @click="updatePassword"
+              >修改密码</el-button
+            >
           </el-form-item>
         </el-form>
       </el-tab-pane>
@@ -51,6 +66,7 @@ import { ElMessage } from "element-plus";
 
 const userInfo = ref({});
 const currentUserId = Number(localStorage.getItem("userId"));
+const passwordLoading = ref(false);
 const passwordForm = reactive({
   oldPassword: "",
   newPassword: "",
@@ -93,7 +109,8 @@ const handleBeforeAvatarUpload = (file) => {
 const handleAvatarUpload = async (options) => {
   const formData = new FormData();
   formData.append("file", options.file);
-  formData.append("receiverId", currentUserId || 0);
+  // 头像上传时 receiverId 设为 0，避免被后端识别为聊天文件传输从而触发好友校验
+  formData.append("receiverId", "0");
 
   try {
     const res = await request.post("/chat/file/upload", formData, {
@@ -114,6 +131,13 @@ const handleAvatarUpload = async (options) => {
 };
 
 const updatePassword = async () => {
+  if (passwordLoading.value) return;
+  if (!passwordForm.oldPassword || !passwordForm.newPassword) {
+    ElMessage.warning("请输入旧密码和新密码");
+    return;
+  }
+
+  passwordLoading.value = true;
   try {
     const res = await request.put("/user/password", passwordForm);
     if (res.code === 200) {
@@ -123,7 +147,11 @@ const updatePassword = async () => {
     } else {
       ElMessage.error(res.message);
     }
-  } catch (e) {}
+  } catch (e) {
+    ElMessage.error("密码修改失败");
+  } finally {
+    passwordLoading.value = false;
+  }
 };
 
 onMounted(() => {

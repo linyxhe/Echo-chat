@@ -60,7 +60,7 @@
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="requestDialogVisible" title="发送好友请求" width="30%">
+    <el-dialog v-model="requestDialogVisible" title="发送好友请求" :width="isMobile ? '92%' : '30%'">
       <el-input v-model="requestRemark" placeholder="请输入验证信息" />
       <template #footer>
         <span class="dialog-footer">
@@ -73,7 +73,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request, { resolveUploadUrl } from '@/util/request'
@@ -89,6 +89,12 @@ const searchResults = ref([])
 const requestDialogVisible = ref(false)
 const requestRemark = ref('')
 const selectedUser = ref(null)
+const isMobile = ref(false)
+let mql
+
+const applyMobileLayout = () => {
+  isMobile.value = Boolean(mql && mql.matches)
+}
 
 const filteredFriends = computed(() => {
   if (!searchKeyword.value) return friends.value
@@ -197,6 +203,13 @@ const startChat = (friend) => {
 onMounted(() => {
   fetchFriends()
   fetchRequests()
+  mql = window.matchMedia('(max-width: 768px)')
+  applyMobileLayout()
+  mql.addEventListener('change', applyMobileLayout)
+})
+
+onBeforeUnmount(() => {
+  if (mql) mql.removeEventListener('change', applyMobileLayout)
 })
 </script>
 
@@ -262,5 +275,44 @@ onMounted(() => {
 
 .search-input {
   margin-bottom: 30px;
+}
+
+@media (max-width: 768px) {
+  .friend-view {
+    padding: 12px;
+  }
+
+  .friend-item, .request-item, .user-item {
+    align-items: flex-start;
+    padding: 10px;
+  }
+
+  .friend-info, .request-info, .user-info {
+    margin-left: 12px;
+    min-width: 0;
+  }
+
+  .name {
+    word-break: break-word;
+  }
+
+  .actions {
+    flex-direction: column;
+    gap: 6px;
+    align-items: stretch;
+  }
+
+  .actions :deep(.el-button) {
+    width: 72px;
+  }
+
+  .add-friend {
+    max-width: none;
+    margin: 0;
+  }
+
+  .search-input {
+    margin-bottom: 16px;
+  }
 }
 </style>

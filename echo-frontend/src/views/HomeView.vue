@@ -154,4 +154,50 @@ onBeforeUnmount(() => {
   background-color: white;
   border-radius: 20px 0 0 20px; /* Optional rounded corners */
 }
+
+@media (max-width: 768px) {
+  .home-container {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: 60px;
+    flex-direction: row;
+    padding: 0;
+    justify-content: space-around;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+  }
+
+  .avatar-container {
+    display: none;
+  }
+
+  .menu {
+    flex: 1;
+    flex-direction: row;
+    gap: 0;
+    justify-content: space-around;
+    align-items: center;
+  }
+
+  .menu-item {
+    padding: 8px 10px;
+    border-radius: 10px;
+  }
+
+  .logout {
+    padding-right: 10px;
+  }
+
+  .content {
+    border-radius: 0;
+    height: calc(100vh - 60px);
+    padding-bottom: 60px;
+  }
+}
 </style>

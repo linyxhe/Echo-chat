@@ -15,7 +15,9 @@ public class Report {
     
     private Long reporterId;
     
-    private Long reportedUserId;
+    private String targetType; // USER, POST
+    
+    private Long targetId;
     
     private String reportType;
     
@@ -37,8 +39,10 @@ public class Report {
     public void setId(Long id) { this.id = id; }
     public Long getReporterId() { return reporterId; }
     public void setReporterId(Long reporterId) { this.reporterId = reporterId; }
-    public Long getReportedUserId() { return reportedUserId; }
-    public void setReportedUserId(Long reportedUserId) { this.reportedUserId = reportedUserId; }
+    public String getTargetType() { return targetType; }
+    public void setTargetType(String targetType) { this.targetType = targetType; }
+    public Long getTargetId() { return targetId; }
+    public void setTargetId(Long targetId) { this.targetId = targetId; }
     public String getReportType() { return reportType; }
     public void setReportType(String reportType) { this.reportType = reportType; }
     public String getDescription() { return description; }

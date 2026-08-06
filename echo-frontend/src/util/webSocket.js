@@ -1,5 +1,6 @@
 // src/util/webSocket.js
 import { onUnmounted } from "vue";
+import { config } from "@/config.js";
 
 export class WebSocketService {
   constructor(options = {}) {
@@ -9,6 +10,8 @@ export class WebSocketService {
     this.reconnectInterval = options.reconnectInterval || 3000;
     this.reconnectTimer = null;
     this.shouldReconnect = true;
+    this.pendingMessages = [];
+    this.heartbeatTimer = null;
     this.listeners = {
       open: [],
       message: [],
@@ -25,31 +28,32 @@ export class WebSocketService {
     const endpointWithToken = token ? `${endpoint}?token=${token}` : endpoint;
 
     const isFile = typeof window !== "undefined" && window.location && window.location.protocol === "file:";
-    const runtime = typeof window !== "undefined" ? window.__APP_CONFIG__ : null;
-
-    // 1. 运行时配置文件（部署到云服务器后修改 public/config.js 即可生效）
-    if (runtime && (runtime.WS_HOST || runtime.API_BASE)) {
-      const protocol = runtime.WS_PROTOCOL || "ws";
-      const host = runtime.WS_HOST || String(runtime.API_BASE).replace(/^https?:\/\//, "");
-      return `${protocol}://${host}${endpointWithToken}`;
-    }
-
-    // 2. 构建期环境变量
     const envHost = import.meta.env.VITE_WS_HOST;
     const envProtocol = import.meta.env.VITE_WS_PROTOCOL;
+    const runtime = typeof window !== "undefined" ? window.__APP_CONFIG__ : null;
+
+    // 1. 构建期环境变量优先，保证 Vite 开发环境不会误用生产 config.js。
     if (envHost) {
       const protocol = envProtocol || "ws";
       return `${protocol}://${envHost}${endpointWithToken}`;
     }
 
-    // 3. 开发 / 桌面端
-    if (import.meta.env.PROD || isFile) {
-      const protocol = envProtocol || "ws";
-      const host = envHost || window.location.host;
+    // 2. 运行时配置文件（生产部署后可单独修改 public/config.js）。
+    if (runtime && (runtime.WS_HOST || runtime.API_BASE)) {
+      const protocol = runtime.WS_PROTOCOL || envProtocol || "ws";
+      const host = runtime.WS_HOST || String(runtime.API_BASE).replace(/^https?:\/\//, "");
       return `${protocol}://${host}${endpointWithToken}`;
     }
 
-    // 4. 开发模式：通过 Vite 代理
+    // 3. 开发 / 桌面端
+      const result = config.target.replace(/^https?:\/\//, '');
+
+      if (import.meta.env.PROD || isFile) {
+      const protocol = envProtocol || "ws";
+      const host = envHost || result;
+      return `${protocol}://${host}${endpointWithToken}`;
+    }
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${protocol}//${window.location.host}${endpointWithToken}`;
   }
@@ -81,6 +85,8 @@ export class WebSocketService {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
       }
+      this.startHeartbeat();
+      this.flushPendingMessages();
       this.emit("open", event);
     };
 
@@ -89,6 +95,7 @@ export class WebSocketService {
     };
 
     this.ws.onclose = (event) => {
+      this.stopHeartbeat();
       this.emit("close", event);
       if (this.shouldReconnect && !event.wasClean) {
         this.scheduleReconnect();
@@ -103,15 +110,46 @@ export class WebSocketService {
 
   send(data) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      if (typeof data === "object") {
-        this.ws.send(JSON.stringify(data));
-      } else {
-        this.ws.send(data);
-      }
+      this.sendRaw(data);
       return true;
     } else {
-      console.warn("WebSocket未连接，消息发送失败:", data);
-      return false;
+      if (this.pendingMessages.length < 100) {
+        this.pendingMessages.push(data);
+      }
+      this.connect();
+      console.warn("WebSocket暂未连接，消息已排队等待重连:", data);
+      return true;
+    }
+  }
+
+  sendRaw(data) {
+    if (typeof data === "object") {
+      this.ws.send(JSON.stringify(data));
+    } else {
+      this.ws.send(data);
+    }
+  }
+
+  flushPendingMessages() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    const pendingMessages = this.pendingMessages.splice(0);
+    pendingMessages.forEach((data) => this.sendRaw(data));
+  }
+
+  startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.sendRaw({ type: "HEARTBEAT" });
+      }
+    }, 25000);
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
   }
 
@@ -158,6 +196,7 @@ export class WebSocketService {
 
   close() {
     this.shouldReconnect = false;
+    this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -166,6 +205,7 @@ export class WebSocketService {
       this.ws.close(1000, "正常关闭");
       this.ws = null;
     }
+    this.pendingMessages = [];
   }
 
   // 获取原始 WebSocket 实例

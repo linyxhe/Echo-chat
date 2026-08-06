@@ -31,6 +31,13 @@ public class UserDetailsServiceImpl implements UserDetailsService {
             throw new UsernameNotFoundException("用户不存在: " + username);
         }
 
+        if (user.getStatus() == 0) {
+            throw new org.springframework.security.authentication.DisabledException("账号已被禁用");
+        }
+        if (user.getStatus() == 2) {
+            throw new org.springframework.security.authentication.LockedException("账号已被封禁");
+        }
+
         // 创建UserDetails对象，用于Spring Security认证
         return new org.springframework.security.core.userdetails.User(
                 user.getUsername(),
