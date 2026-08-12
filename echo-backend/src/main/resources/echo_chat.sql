@@ -1,4 +1,10 @@
 /*
+ Legacy schema export.
+
+ This file is retained only for historical reference. Do not run it against an
+ existing database: it contains DROP TABLE statements. All future schema
+ changes must use src/main/resources/db/migration/ Flyway migrations.
+
  Navicat Premium Data Transfer
 
  Source Server         : mysql

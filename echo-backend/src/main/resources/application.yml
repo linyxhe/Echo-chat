@@ -5,13 +5,64 @@ server:
     context-path: ${CONTEXT_PATH:}
 
 app:
-  upload-dir: upload
+  ai:
+    # bot 用普通自增 id，按 username 解析（避免显式高 id 顶爆 AUTO_INCREMENT，InnoDB 不允许把计数器重置到低于 max(id)）
+    bot-username: ${AI_BOT_USERNAME:ai_assistant}
+    bot-nickname: ${AI_BOT_NICKNAME:AI 助手}
+    persona: ${AI_PERSONA:你是 Echo Chat Room 的 AI 助手，请用简体中文友好地回答，语气自然、简洁。}
+    # 多轮记忆上下文窗口：把用户与 bot 最近 N 条文字消息作为上下文（≈ N/2 轮对话）
+    context-window-messages: ${AI_CONTEXT_WINDOW_MESSAGES:20}
+    # 知识库 RAG（本地中文嵌入 bge-small-zh-v1.5）
+    kb:
+      enabled: ${AI_KB_ENABLED:true}
+      chunk-size: ${AI_KB_CHUNK_SIZE:500}
+      chunk-overlap: ${AI_KB_CHUNK_OVERLAP:50}
+      top-k: ${AI_KB_TOP_K:4}
+      # BGE 余弦相似度低于该值时视为“无可靠知识依据”，避免无关问题被错误注入上下文。
+      min-score: ${AI_KB_MIN_SCORE:0.55}
+      max-chunks-per-document: ${AI_KB_MAX_CHUNKS_PER_DOCUMENT:2}
+      semantic-fallback-score: ${AI_KB_SEMANTIC_FALLBACK_SCORE:0.68}
+      max-doc-size: ${AI_KB_MAX_DOC_SIZE:1048576}
+  presence:
+    # Redis 在线状态 TTL（秒）：超过该时长无心跳视为离线
+    online-ttl-seconds: ${APP_PRESENCE_ONLINE_TTL_SECONDS:150}
+    # 服务端心跳超时淘汰阈值（秒）：会话超过该时长未收到心跳则关闭
+    evict-idle-seconds: ${APP_PRESENCE_EVICT_IDLE_SECONDS:120}
+    # 定时清扫间隔（毫秒）
+    sweep-interval-ms: ${APP_PRESENCE_SWEEP_INTERVAL_MS:60000}
+  file:
+    # 大文件由 tusd 直接写入临时目录，Spring Boot 只保存元数据与完成确认。
+    tus-endpoint: ${TUSD_PUBLIC_ENDPOINT:http://localhost:1080/files/}
+    # The frontend tusd launcher writes under the project-root upload directory.
+    # IDEA's Spring Boot run config has no explicit working directory, so it defaults
+    # to the module root (project root). These relative paths resolve from there.
+    tusd-upload-dir: ${TUSD_UPLOAD_DIR:upload/tusd}
+    storage-dir: ${APP_FILE_STORAGE_DIR:upload/files}
+    max-size: ${APP_FILE_MAX_SIZE:21474836480}
+    intent-ttl-minutes: ${APP_FILE_INTENT_TTL_MINUTES:60}
+    cleanup-interval-ms: ${APP_FILE_CLEANUP_INTERVAL_MS:3600000}
+    cleanup-initial-delay-ms: ${APP_FILE_CLEANUP_INITIAL_DELAY_MS:300000}
+
+# AI Gateway（DeepSeek，OpenAI 兼容接口）。流式模型 bean 仅在 api-key 非空时由 starter 自动配置；
+# AiChatServiceImpl 也会以解析后的 key 为准做兜底，无 key 时优雅降级。
+langchain4j:
+  open-ai:
+    streaming-chat-model:
+      base-url: ${AI_BASE_URL:https://api.deepseek.com/v1}
+      api-key: ${AI_API_KEY:}
+      model-name: ${AI_MODEL:deepseek-chat}
+      temperature: 0.7
+      timeout: 60s
 
 spring:
+  application:
+    name: echo-chat
+  profiles:
+    default: local
   datasource:
-    url: jdbc:mysql://localhost:3306/echo_chat?useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
-    username: your-account
-    password: your-password
+    url: ${DB_URL:jdbc:mysql://localhost:3306/echo_chat?useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
     # 连接池配置：
     druid:
@@ -30,6 +81,15 @@ spring:
       file-size-threshold: 2KB
       max-file-size: 10MB
       max-request-size: 10MB
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 1
+    baseline-description: existing echo_chat schema
+    validate-on-migrate: true
+    clean-disabled: true
   
   # Redis配置
   data:
@@ -45,9 +105,8 @@ spring:
     port: 465
     protocol: smtp
     default-encoding: UTF-8
-    username: your-email
-    # 邮箱授权码
-    password: your-key
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
     properties:
       mail:
         smtp:
@@ -57,7 +116,7 @@ spring:
 
 # JWT配置
 jwt:
-  secret: echo-chat-secret-key
+  secret: ${JWT_SECRET}
   expiration: 86400000 # 24小时
 
 # WebSocket配置

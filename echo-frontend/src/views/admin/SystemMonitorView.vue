@@ -67,4 +67,18 @@ onMounted(() => {
 .warning {
   color: #f56c6c;
 }
+
+@media (max-width: 768px) {
+  .system-monitor {
+    padding: 4px;
+  }
+  .stats-cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .stat-card {
+    width: auto;
+  }
+}
 </style>

@@ -48,12 +48,53 @@ public class ChatController {
     }
 
     /**
-     * 文件上传
+     * 文件上传（receiverId 好友 与 groupId 群 二选一）
      */
     @PostMapping("/file/upload")
     public Result<Object> uploadFile(@RequestParam("file") MultipartFile file,
-                                     @RequestParam("receiverId") Long receiverId) {
-        return chatService.uploadFile(file, receiverId);
+                                     @RequestParam(value = "receiverId", required = false) Long receiverId,
+                                     @RequestParam(value = "groupId", required = false) Long groupId) {
+        return chatService.uploadFile(file, receiverId, groupId);
+    }
+
+    /**
+     * 清空与某好友/AI 助手的全部聊天记录（软删除，只影响当前用户视角）
+     */
+    @DeleteMapping("/conversations/{friendId}")
+    public Result<Object> clearConversation(@PathVariable Long friendId) {
+        Long currentUserId = getCurrentUserId();
+        if (currentUserId == null) return Result.fail("未登录");
+        return chatService.deleteMessages(currentUserId, friendId, "ALL", null);
+    }
+
+    /** 从当前用户的消息列表隐藏会话；新消息到达时会自动重新出现。 */
+    @PutMapping("/conversations/{friendId}/archive")
+    public Result<Object> archiveConversation(@PathVariable Long friendId) {
+        Long currentUserId = getCurrentUserId();
+        if (currentUserId == null) return Result.fail("未登录");
+        return chatService.setConversationArchived(currentUserId, friendId, true);
+    }
+
+    /** 恢复当前用户视角已隐藏的会话。 */
+    @DeleteMapping("/conversations/{friendId}/archive")
+    public Result<Object> unarchiveConversation(@PathVariable Long friendId) {
+        Long currentUserId = getCurrentUserId();
+        if (currentUserId == null) return Result.fail("未登录");
+        return chatService.setConversationArchived(currentUserId, friendId, false);
+    }
+
+    @PutMapping("/conversations/{friendId}/pin")
+    public Result<Object> pinConversation(@PathVariable Long friendId) {
+        Long currentUserId = getCurrentUserId();
+        if (currentUserId == null) return Result.fail("未登录");
+        return chatService.setConversationPinned(currentUserId, friendId, true);
+    }
+
+    @DeleteMapping("/conversations/{friendId}/pin")
+    public Result<Object> unpinConversation(@PathVariable Long friendId) {
+        Long currentUserId = getCurrentUserId();
+        if (currentUserId == null) return Result.fail("未登录");
+        return chatService.setConversationPinned(currentUserId, friendId, false);
     }
 
     private Long getCurrentUserId() {

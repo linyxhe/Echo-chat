@@ -30,6 +30,13 @@
       >
         <el-icon><Setting /></el-icon> 系统配置
       </div>
+      <div
+        class="menu-item"
+        :class="{ active: route.path === '/admin/kb' }"
+        @click="$router.push('/admin/kb')"
+      >
+        <el-icon><Collection /></el-icon> 知识库
+      </div>
 
       <div class="logout-btn" @click="handleLogout">
         <el-icon><SwitchButton /></el-icon> 退出登录
@@ -43,7 +50,7 @@
 
 <script setup>
 import { useRoute, useRouter } from "vue-router";
-import { Monitor, User, Warning, Setting, SwitchButton } from "@element-plus/icons-vue";
+import { Monitor, User, Warning, Setting, SwitchButton, Collection } from "@element-plus/icons-vue";
 import { ElMessageBox } from "element-plus";
 
 const route = useRoute();
@@ -67,6 +74,7 @@ const handleLogout = () => {
 .admin-layout {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   background-color: #f5f5f5; /* 与用户端一致的背景色 */
 }
 .sidebar {
@@ -123,5 +131,47 @@ const handleLogout = () => {
   flex: 1;
   padding: 20px;
   overflow: auto;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .admin-layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    min-height: 56px;
+    flex-direction: row;
+    overflow-x: auto;
+    box-sizing: border-box;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  }
+
+  .logo {
+    display: none;
+  }
+
+  .menu-item,
+  .logout-btn {
+    flex: 0 0 auto;
+    min-height: 48px;
+    padding: 0 12px;
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .menu-item.active {
+    border-bottom: 3px solid #409eff;
+  }
+
+  .logout-btn {
+    margin-top: 0;
+    border-left: 1px solid #e6e6e6;
+  }
+
+  .content {
+    padding: 12px;
+  }
 }
 </style>

@@ -64,18 +64,18 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount } from "vue";
+import { ref, reactive } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import request from "@/util/request";
+import { useMobileViewport } from "@/composables/useMobileViewport";
 
 const router = useRouter();
 const registerFormRef = ref(null);
 const loading = ref(false);
 const captchaDisabled = ref(false);
 const captchaBtnText = ref("发送验证码");
-const isMobile = ref(false);
-let mql;
+const { isMobile } = useMobileViewport();
 
 const registerForm = reactive({
   username: "",
@@ -171,19 +171,6 @@ const handleRegister = async () => {
   });
 };
 
-const applyMobileLayout = () => {
-  isMobile.value = Boolean(mql && mql.matches);
-};
-
-onMounted(() => {
-  mql = window.matchMedia("(max-width: 768px)");
-  applyMobileLayout();
-  mql.addEventListener("change", applyMobileLayout);
-});
-
-onBeforeUnmount(() => {
-  if (mql) mql.removeEventListener("change", applyMobileLayout);
-});
 </script>
 
 <style scoped>
@@ -209,6 +196,23 @@ h2 {
 }
 
 @media (max-width: 768px) {
+  .register-container {
+    align-items: flex-start;
+    padding-top: max(24px, env(safe-area-inset-top));
+  }
+
+  .register-card {
+    max-width: none;
+  }
+
+  .register-card :deep(.el-card__body) {
+    padding: 20px 16px;
+  }
+
+  .register-card :deep(.el-input-group__append) {
+    padding: 0 8px;
+  }
+
   h2 {
     margin-bottom: 16px;
   }

@@ -21,6 +21,10 @@ public class Conversation {
     private Long lastMessageId;
     
     private Integer unreadCount;
+
+    /** 只控制当前 user1 视角的会话列表展示，不代表删除消息。 */
+    private Boolean isArchived;
+    private Boolean isPinned;
     
     private LocalDateTime updatedAt;
     
@@ -63,6 +67,22 @@ public class Conversation {
     
     public void setUnreadCount(Integer unreadCount) {
         this.unreadCount = unreadCount;
+    }
+
+    public Boolean getIsArchived() {
+        return isArchived;
+    }
+
+    public void setIsArchived(Boolean archived) {
+        isArchived = archived;
+    }
+
+    public Boolean getIsPinned() {
+        return isPinned;
+    }
+
+    public void setIsPinned(Boolean pinned) {
+        isPinned = pinned;
     }
     
     public LocalDateTime getUpdatedAt() {

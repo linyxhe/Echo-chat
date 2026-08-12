@@ -5,6 +5,7 @@ import com.echo.mapper.PostMapper;
 import com.echo.mapper.ReportMapper;
 import com.echo.mapper.UserMapper;
 import com.echo.pojo.User;
+import com.echo.service.PresenceService;
 import com.echo.service.UserService;
 import com.echo.vo.Result;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,12 +34,18 @@ public class SystemMonitorController {
     @Autowired
     private UserService userService;
 
+    @Autowired
+    private PresenceService presenceService;
+
     @GetMapping("/stats")
     public Result<Object> getStats() {
         if (!isAdmin()) return Result.fail("无权限");
-        
+
         Map<String, Object> stats = new HashMap<>();
-        
+
+        // 在线用户数（Redis presence）
+        stats.put("onlineUsers", presenceService != null ? presenceService.getOnlineCount() : 0);
+
         // 用户总数
         stats.put("totalUsers", userMapper.selectCount(null));
         

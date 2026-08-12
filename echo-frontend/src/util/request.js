@@ -11,7 +11,11 @@ const getRuntimeConfig = () => {
   return null;
 };
 
-const getApiOrigin = () => {
+export const getApiOrigin = () => {
+  // 0. 开发环境始终走 Vite 代理（相对 /api）：本机与局域网设备（手机连热点）都指向本地后端，
+  //    避免 VITE_API_BASE / __APP_CONFIG__.API_BASE 把请求发到 localhost 或生产地址。
+  if (import.meta.env.DEV) return "";
+
   // 1. 构建期环境变量
   const envBase = import.meta.env.VITE_API_BASE;
   if (envBase) return String(envBase).replace(/\/+$/, "");
@@ -39,46 +43,35 @@ export const resolveUploadUrl = (value) => {
   const url = String(value);
   const apiOrigin = getApiOrigin();
 
-  // 1. 如果是相对路径，拼接上 API 地址
-  if (url.startsWith("/upload/")) {
-    if (apiOrigin) return `${apiOrigin}${url}`;
-    return url;
+  // 1. 相对 /files/ 路径，拼接上 API 地址（旧 /upload/** 公开目录已关闭，不再生成 /upload/ URL）
+  if (url.startsWith("/files/")) {
+    return apiOrigin ? `${apiOrigin}${url}` : url;
   }
 
-  // 2. 如果是完整的 localhost/127.0.0.1 地址，尝试替换为当前环境的 API 地址
-  if (url.startsWith("http://localhost:8088/upload/"))
-    return apiOrigin ? url.replace("http://localhost:8088", apiOrigin) : url;
-  if (url.startsWith("http://127.0.0.1:8088/upload/"))
-    return apiOrigin ? url.replace("http://127.0.0.1:8088", apiOrigin) : url;
+  // 2. 生产内网地址（10.227.100.50:8088）原样返回
+  if (url.startsWith("http://10.227.100.50:8088/files/")) return url;
 
-  // 3. 已经在 172.20.153.16 的，直接返回
-  if (url.startsWith("http://10.227.100.50:8088/upload/")) return url;
-
-  // 4. 尝试处理可能的 JSON 字符串情况 (Post.mediaUrls 存储的是 JSON 数组，但这里处理单个 URL)
-  // 如果数据库里存的是完整的 URL 列表 JSON 字符串，应该在外部解析，不应传到这里
-  // 但如果是单个 URL 字符串被意外包裹，可以尝试解析
-
+  // 3. 其余绝对地址若指向受控下载路径 /files/，替换 Host 为当前 API 地址（保留 query，如 access token）
   try {
     const parsed = new URL(url);
-    if (parsed.pathname && parsed.pathname.startsWith("/upload/")) {
-      // 替换 Host
-      if (apiOrigin) return `${apiOrigin}${parsed.pathname}`;
+    if (parsed.pathname && parsed.pathname.startsWith("/files/")) {
+      if (apiOrigin) return `${apiOrigin}${parsed.pathname}${parsed.search}`;
     }
   } catch (e) {
-    // 不是有效的 URL，可能是相对路径但没有 /upload 前缀？暂不处理
+    // 不是有效的 URL
   }
 
   return url;
 };
 
-const clearAuthStorage = () => {
+export const clearAuthStorage = () => {
   localStorage.removeItem("token");
   localStorage.removeItem("tokenExpiresAt");
   localStorage.removeItem("userId");
   localStorage.removeItem("username");
 };
 
-const getValidToken = () => {
+export const getValidToken = () => {
   const token = localStorage.getItem("token");
   if (!token) return "";
 

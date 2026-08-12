@@ -1,22 +1,29 @@
 // src/util/webSocket.js
 import { onUnmounted } from "vue";
 import { config } from "@/config.js";
+import { getValidToken, clearAuthStorage } from "@/util/request";
 
 export class WebSocketService {
   constructor(options = {}) {
     this.ws = null;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = options.maxReconnectAttempts || 5;
+    this.maxReconnectAttempts = options.maxReconnectAttempts ?? Infinity; // 默认无限重试
     this.reconnectInterval = options.reconnectInterval || 3000;
+    this.maxReconnectDelay = options.maxReconnectDelay || 30000; // 退避封顶
     this.reconnectTimer = null;
     this.shouldReconnect = true;
     this.pendingMessages = [];
     this.heartbeatTimer = null;
+    this.watchdogTimer = null;
+    this.lastInboundAt = 0; // 最近一次收到服务端帧的时间（服务端存活看门狗）
+    this.serverTimeoutMs = options.serverTimeoutMs || 65000; // 服务端无响应超时
     this.listeners = {
       open: [],
       message: [],
       close: [],
       error: [],
+      "auth-failed": [],
+      "reconnect-exhausted": [],
     };
 
     this.endpoint = options.endpoint || "/ws";
@@ -24,8 +31,15 @@ export class WebSocketService {
   }
 
   buildWebSocketUrl(endpoint) {
-    const token = localStorage.getItem("token");
+    const token = getValidToken();
     const endpointWithToken = token ? `${endpoint}?token=${token}` : endpoint;
+
+    // 0. 开发环境：WS 走同一 host（Vite ws 代理），本机与局域网设备（手机连热点）都指向本地后端，
+    //    避免 __APP_CONFIG__.WS_HOST 把 WS 发到生产地址。
+    if (import.meta.env.DEV) {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return `${protocol}//${window.location.host}${endpointWithToken}`;
+    }
 
     const isFile = typeof window !== "undefined" && window.location && window.location.protocol === "file:";
     const envHost = import.meta.env.VITE_WS_HOST;
@@ -68,6 +82,13 @@ export class WebSocketService {
       return;
     }
 
+    // token 已过期/缺失：清登录态并通知视图去登录，不再用无效 token 反复握手
+    if (!getValidToken()) {
+      this.shouldReconnect = false;
+      this.emit("auth-failed", { reason: "token expired" });
+      return;
+    }
+
     this.url = this.buildWebSocketUrl(this.endpoint);
     try {
       this.ws = new WebSocket(this.url);
@@ -85,18 +106,32 @@ export class WebSocketService {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
       }
+      this.lastInboundAt = Date.now();
       this.startHeartbeat();
+      this.startWatchdog();
       this.flushPendingMessages();
       this.emit("open", event);
     };
 
     this.ws.onmessage = (event) => {
+      this.lastInboundAt = Date.now();
       this.emit("message", event);
     };
 
     this.ws.onclose = (event) => {
       this.stopHeartbeat();
+      this.stopWatchdog();
       this.emit("close", event);
+      // 服务端 CANNOT_ACCEPT(1003) 且原因是认证失败 → 停止重连，通知视图跳登录
+      const reason = (event && event.reason) || "";
+      const isAuthFailure =
+        (event && event.code === 1003) || reason.includes("Authentication");
+      if (isAuthFailure) {
+        this.shouldReconnect = false;
+        clearAuthStorage();
+        this.emit("auth-failed", event);
+        return;
+      }
       if (this.shouldReconnect && !event.wasClean) {
         this.scheduleReconnect();
       }
@@ -153,6 +188,33 @@ export class WebSocketService {
     }
   }
 
+  /**
+   * 服务端存活看门狗：任何入站帧都会刷新 lastInboundAt（服务端每 ~25s 回一次 HEARTBEAT）。
+   * 若超时未收到任何帧（半开连接），主动关闭连接以触发重连。
+   */
+  startWatchdog() {
+    this.stopWatchdog();
+    this.lastInboundAt = Date.now();
+    this.watchdogTimer = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - this.lastInboundAt > this.serverTimeoutMs) {
+        console.warn("WebSocket 服务端无响应，主动断开以触发重连");
+        try {
+          this.ws.close();
+        } catch (e) {
+          // 忽略
+        }
+      }
+    }, 15000);
+  }
+
+  stopWatchdog() {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+  }
+
   on(event, callback) {
     if (this.listeners[event]) {
       this.listeners[event].push(callback);
@@ -180,23 +242,32 @@ export class WebSocketService {
     }
   }
 
+  /** 持久重连：默认无限重试，指数退避（3s 起，封顶 30s）。登出/关闭时 shouldReconnect=false 停止。 */
   scheduleReconnect() {
     if (!this.shouldReconnect) return;
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++;
-      if (this.reconnectTimer) {
-        clearTimeout(this.reconnectTimer);
-      }
-
-      this.reconnectTimer = setTimeout(() => {
-        this.connect();
-      }, this.reconnectInterval * this.reconnectAttempts);
+    if (Number.isFinite(this.maxReconnectAttempts) && this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.warn("WebSocket 重连次数已达上限，停止重连");
+      this.emit("reconnect-exhausted");
+      return;
     }
+    this.reconnectAttempts++;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+
+    const delay = Math.min(
+      this.reconnectInterval * Math.pow(2, this.reconnectAttempts - 1),
+      this.maxReconnectDelay
+    );
+    this.reconnectTimer = setTimeout(() => {
+      this.connect();
+    }, delay);
   }
 
   close() {
     this.shouldReconnect = false;
     this.stopHeartbeat();
+    this.stopWatchdog();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

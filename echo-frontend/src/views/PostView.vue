@@ -79,7 +79,7 @@
       </div>
     </div>
 
-    <el-dialog v-model="createDialogVisible" title="发布动态" width="40%">
+    <el-dialog v-model="createDialogVisible" title="发布动态" :width="isMobile ? '92%' : '40%'">
       <el-form :model="newPost" label-width="0">
         <el-form-item>
           <el-input
@@ -118,7 +118,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="reportDialogVisible" title="举报内容" width="30%">
+    <el-dialog v-model="reportDialogVisible" title="举报内容" :width="isMobile ? '92%' : '30%'">
       <el-form :model="reportForm" label-width="80px">
         <el-form-item label="举报类型">
           <el-select v-model="reportForm.reportType" placeholder="请选择类型">
@@ -155,6 +155,7 @@ import {
 import request, { resolveUploadUrl } from "@/util/request";
 import defaultAvatar from "@/img/avatar/Member001.jpg";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { useMobileViewport } from "@/composables/useMobileViewport";
 
 const posts = ref([]);
 const createDialogVisible = ref(false);
@@ -165,6 +166,7 @@ const newPost = reactive({
   mediaUrls: [],
 });
 const fileList = ref([]);
+const { isMobile } = useMobileViewport();
 
 const reportDialogVisible = ref(false);
 const reportForm = reactive({
@@ -473,5 +475,39 @@ onMounted(() => {
 
 .comment-input {
   margin-top: 10px;
+}
+
+@media (max-width: 768px) {
+  .post-view {
+    padding: 12px;
+  }
+
+  .post-header {
+    margin-bottom: 12px;
+  }
+
+  .post-header :deep(.el-button) {
+    min-height: 40px;
+  }
+
+  .post-item {
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+
+  .post-images {
+    gap: 8px;
+  }
+
+  .post-image {
+    width: calc((100vw - 52px) / 3);
+    height: calc((100vw - 52px) / 3);
+    max-width: 120px;
+    max-height: 120px;
+  }
+
+  .post-actions {
+    gap: 18px;
+  }
 }
 </style>

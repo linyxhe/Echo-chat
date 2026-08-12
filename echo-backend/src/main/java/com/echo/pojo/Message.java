@@ -17,6 +17,8 @@ public class Message {
     private Long senderId;
     
     private Long receiverId;
+
+    private String clientMessageId;
     
     private String content;
     
@@ -29,11 +31,13 @@ public class Message {
     private Long fileSize;
     
     private Boolean isRead;
-    
+
+    private LocalDateTime readAt;
+
     private Boolean deletedBySender;
-    
+
     private Boolean deletedByReceiver;
-    
+
     private LocalDateTime createdAt;
     
     // Getters and setters
@@ -59,6 +63,14 @@ public class Message {
     
     public void setReceiverId(Long receiverId) {
         this.receiverId = receiverId;
+    }
+
+    public String getClientMessageId() {
+        return clientMessageId;
+    }
+
+    public void setClientMessageId(String clientMessageId) {
+        this.clientMessageId = clientMessageId;
     }
     
     public String getContent() {
@@ -108,7 +120,15 @@ public class Message {
     public void setIsRead(Boolean isRead) {
         this.isRead = isRead;
     }
-    
+
+    public LocalDateTime getReadAt() {
+        return readAt;
+    }
+
+    public void setReadAt(LocalDateTime readAt) {
+        this.readAt = readAt;
+    }
+
     public Boolean getDeletedBySender() {
         return deletedBySender;
     }

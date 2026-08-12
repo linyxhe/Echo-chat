@@ -38,9 +38,13 @@ public class User {
     private LocalDateTime lastLoginAt;
     
     private LocalDateTime createdAt;
-    
+
     private LocalDateTime updatedAt;
-    
+
+    private Boolean showOnlineStatus;
+
+    private Boolean showReadReceipts;
+
     // Getters and setters
     public Long getId() {
         return id;
@@ -133,11 +137,27 @@ public class User {
     public LocalDateTime getUpdatedAt() {
         return updatedAt;
     }
-    
+
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
     }
-    
+
+    public Boolean getShowOnlineStatus() {
+        return showOnlineStatus;
+    }
+
+    public void setShowOnlineStatus(Boolean showOnlineStatus) {
+        this.showOnlineStatus = showOnlineStatus;
+    }
+
+    public Boolean getShowReadReceipts() {
+        return showReadReceipts;
+    }
+
+    public void setShowReadReceipts(Boolean showReadReceipts) {
+        this.showReadReceipts = showReadReceipts;
+    }
+
     // Getter and setter for transient password field
     public String getPassword() {
         return password;

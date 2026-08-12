@@ -36,6 +36,10 @@ const login = async () => {
     if (res.code === 200) {
       localStorage.setItem('token', res.data.token)
       localStorage.setItem('tokenExpiresAt', String(Date.now() + tokenTtlMs))
+      // 与主应用共用同一套 localStorage：同步 userId/username，
+      // 否则 token 已是 admin 的但 userId 仍是旧登录者 → 消息渲染成对方发的。
+      localStorage.setItem('userId', res.data.userId)
+      localStorage.setItem('username', res.data.username || '')
       router.push('/admin/users')
     } else {
       ElMessage.error(res.message)

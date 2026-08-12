@@ -1,13 +1,16 @@
 package com.echo.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.echo.file.FileService;
 import com.echo.mapper.ConversationMapper;
 import com.echo.mapper.MessageMapper;
 import com.echo.mapper.UserMapper;
 import com.echo.pojo.Conversation;
+import com.echo.pojo.Friendship;
 import com.echo.pojo.Message;
 import com.echo.pojo.User;
 import com.echo.vo.Result;
@@ -17,10 +20,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -41,20 +40,29 @@ public class ChatServiceImpl extends ServiceImpl<MessageMapper, Message> impleme
     @Autowired
     private com.echo.mapper.FriendshipMapper friendshipMapper;
 
+    @Autowired
+    private FileService fileService;
+
+    @Autowired
+    private com.echo.ai.BotUserService botUserService;
+
+    @Autowired
+    private ConversationService conversationService;
+
+    @Autowired
+    private PresenceService presenceService;
+
     @Value("${server.port}")
     private String serverPort;
-
-    @Value("${app.upload-dir:upload}")
-    private String uploadDir;
 
     @Override
     public Result<Object> getMessages(Long currentUserId, Long friendId, String beforeTime, Integer limit) {
         QueryWrapper<Message> queryWrapper = new QueryWrapper<>();
-        // (sender = me AND receiver = friend) OR (sender = friend AND receiver = me)
+        // (sender = me AND receiver = friend AND 我未删) OR (sender = friend AND receiver = me AND 我未删)
         queryWrapper.and(wrapper -> wrapper
-                .nested(w -> w.eq("sender_id", currentUserId).eq("receiver_id", friendId))
+                .nested(w -> w.eq("sender_id", currentUserId).eq("receiver_id", friendId).eq("deleted_by_sender", false))
                 .or()
-                .nested(w -> w.eq("sender_id", friendId).eq("receiver_id", currentUserId))
+                .nested(w -> w.eq("sender_id", friendId).eq("receiver_id", currentUserId).eq("deleted_by_receiver", false))
         );
         
         if (StringUtils.hasText(beforeTime)) {
@@ -88,22 +96,48 @@ public class ChatServiceImpl extends ServiceImpl<MessageMapper, Message> impleme
         
         Page<Conversation> pageParam = new Page<>(page, size);
         QueryWrapper<Conversation> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("user1_id", currentUserId);
+        queryWrapper.eq("user1_id", currentUserId)
+                .and(wrapper -> wrapper.eq("is_archived", false).or().isNull("is_archived"));
         queryWrapper.orderByDesc("updated_at");
         
         IPage<Conversation> resultPage = conversationMapper.selectPage(pageParam, queryWrapper);
-        
-        List<Map<String, Object>> list = resultPage.getRecords().stream().map(c -> {
+
+        // AI 助手会话由前端单独注入，这里过滤掉所有 BOT，避免混入普通好友会话。
+        Long botId = botUserService != null ? botUserService.getBotUserId() : null;
+        List<Conversation> records = resultPage.getRecords().stream()
+                .filter(c -> {
+                    if (botId != null && botId.equals(c.getUser2Id())) return false;
+                    User target = userMapper.selectById(c.getUser2Id());
+                    return target == null || !"BOT".equalsIgnoreCase(target.getRole());
+                })
+                .collect(Collectors.toList());
+
+        List<Map<String, Object>> list = records.stream().map(c -> {
             Map<String, Object> map = new HashMap<>();
             map.put("conversationId", c.getId());
             map.put("friendId", c.getUser2Id());
             map.put("unreadCount", c.getUnreadCount());
             map.put("updatedAt", c.getUpdatedAt());
-            
+            map.put("isPinned", !Boolean.FALSE.equals(c.getIsPinned()));
+
             User friend = userMapper.selectById(c.getUser2Id());
             if (friend != null) {
                 map.put("friendNickname", friend.getNickname());
                 map.put("friendAvatar", friend.getAvatarUrl());
+                Friendship friendship = friendshipMapper.selectOne(new QueryWrapper<Friendship>()
+                        .eq("user_id", currentUserId)
+                        .eq("friend_id", c.getUser2Id())
+                        .eq("status", 1));
+                String remark = friendship == null ? null : friendship.getRemark();
+                map.put("remark", remark);
+                map.put("displayName", StringUtils.hasText(remark) ? remark : friend.getNickname());
+                map.put("contactType", "FRIEND");
+                // 隐私：对方关闭「展示在线状态」时对他人隐藏
+                boolean online = presenceService != null && presenceService.isOnline(c.getUser2Id())
+                        && Boolean.TRUE.equals(friend.getShowOnlineStatus());
+                map.put("online", online);
+            } else {
+                map.put("online", false);
             }
             
             if (c.getLastMessageId() != null) {
@@ -122,80 +156,63 @@ public class ChatServiceImpl extends ServiceImpl<MessageMapper, Message> impleme
     }
 
     @Override
-    public Result<Object> uploadFile(MultipartFile file, Long receiverId) {
-        if (file.isEmpty()) {
-            return Result.fail("文件为空");
-        }
-        
-        // 如果 receiverId > 0，则进行好友关系校验（聊天文件）
-        if (receiverId != null && receiverId > 0) {
-            try {
-                org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-                Long currentUserId = null;
-                if (auth != null && auth.getName() != null) {
-                    com.echo.pojo.User me = userMapper.selectOne(new QueryWrapper<com.echo.pojo.User>().eq("username", auth.getName()));
-                    if (me != null) currentUserId = me.getId();
-                }
-
-                if (currentUserId != null) {
-                    final Long finalCurrentUserId = currentUserId;
-                    QueryWrapper<com.echo.pojo.Friendship> query = new QueryWrapper<>();
-                    query.and(w -> w
-                        .nested(i -> i.eq("user_id", finalCurrentUserId).eq("friend_id", receiverId))
-                        .or()
-                        .nested(i -> i.eq("user_id", receiverId).eq("friend_id", finalCurrentUserId))
-                    ).eq("status", 1);
-                    
-                    if (friendshipMapper.selectCount(query) == 0) {
-                        return Result.fail("未添加该好友，请先添加后再发送文件");
-                    }
-                }
-            } catch (Exception ignored) {}
-        }
-        
-        try {
-            String originalFilename = file.getOriginalFilename();
-            String extension = StringUtils.getFilenameExtension(originalFilename);
-            String fileName = UUID.randomUUID() + (StringUtils.hasText(extension) ? ("." + extension) : "");
-
-            Path uploadPath = resolveUploadPath();
-            Files.createDirectories(uploadPath);
-
-            Path dest = uploadPath.resolve(fileName).toAbsolutePath().normalize();
-            file.transferTo(dest.toFile());
-
-            String fileUrl = "/upload/" + fileName;
-            
-            Map<String, Object> data = new HashMap<>();
-            data.put("fileId", UUID.randomUUID().toString());
-            data.put("fileName", StringUtils.hasText(originalFilename) ? originalFilename : fileName);
-            data.put("fileSize", file.getSize());
-            data.put("fileUrl", fileUrl);
-            data.put("fileType", StringUtils.hasText(extension) ? extension.toUpperCase() : "UNKNOWN");
-            
-            return Result.success(data);
-            
-        } catch (IOException e) {
-            e.printStackTrace();
-            return Result.fail("文件上传失败");
-        }
+    public Result<Object> setConversationArchived(Long currentUserId, Long friendId, boolean archived) {
+        if (currentUserId == null || friendId == null) return Result.fail("会话参数无效");
+        Conversation conv = conversationMapper.selectOne(new QueryWrapper<Conversation>()
+                .eq("user1_id", currentUserId)
+                .eq("user2_id", friendId));
+        if (conv == null) return Result.success(archived ? "会话已隐藏" : "会话已恢复");
+        conv.setIsArchived(archived);
+        if (archived) conv.setUnreadCount(0);
+        conv.setUpdatedAt(LocalDateTime.now());
+        conversationMapper.updateById(conv);
+        return Result.success(archived ? "会话已从列表移除" : "会话已恢复");
     }
 
-    private Path resolveUploadPath() {
-        Path path = Paths.get(uploadDir);
-        if (path.isAbsolute()) {
-            return path.toAbsolutePath().normalize();
+    @Override
+    public Result<Object> setConversationPinned(Long currentUserId, Long friendId, boolean pinned) {
+        if (currentUserId == null || friendId == null) return Result.fail("会话参数无效");
+        Conversation conv = conversationMapper.selectOne(new QueryWrapper<Conversation>()
+                .eq("user1_id", currentUserId)
+                .eq("user2_id", friendId));
+        if (conv == null) return Result.success(pinned ? "会话已置顶" : "会话已取消置顶");
+        conv.setIsPinned(pinned);
+        conv.setUpdatedAt(LocalDateTime.now());
+        conversationMapper.updateById(conv);
+        return Result.success(pinned ? "会话已置顶" : "会话已取消置顶");
+    }
+
+    @Override
+    public Result<Object> uploadFile(MultipartFile file, Long receiverId, Long groupId) {
+        if (groupId != null) return fileService.uploadSmallFileToGroup(resolveCurrentUserId(), file, groupId);
+        return fileService.uploadSmallFile(resolveCurrentUserId(), file, receiverId);
+    }
+
+    private Long resolveCurrentUserId() {
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.isAuthenticated() && StringUtils.hasText(auth.getName()) && !"anonymousUser".equals(auth.getName())) {
+            User user = userMapper.selectOne(new QueryWrapper<User>().eq("username", auth.getName()));
+            return user == null ? null : user.getId();
         }
-        return Paths.get(System.getProperty("user.dir")).resolve(path).toAbsolutePath().normalize();
+        return null;
     }
 
     @Override
     public Result<Object> deleteMessages(Long currentUserId, Long friendId, String deleteType, String beforeTime) {
         if ("ALL".equals(deleteType)) {
-            // 逻辑删除?
-            // update message set deleted_by_sender = 1 where sender = me and receiver = friend
-            // update message set deleted_by_receiver = 1 where sender = friend and receiver = me
-            // 这里简化为物理删除或标记
+            // 软删除：只影响自己这一侧的视图。我发的标记 deleted_by_sender，对方发的标记 deleted_by_receiver。
+            UpdateWrapper<Message> uw1 = new UpdateWrapper<>();
+            uw1.eq("sender_id", currentUserId).eq("receiver_id", friendId).set("deleted_by_sender", true);
+            messageMapper.update(null, uw1);
+
+            UpdateWrapper<Message> uw2 = new UpdateWrapper<>();
+            uw2.eq("sender_id", friendId).eq("receiver_id", currentUserId).set("deleted_by_receiver", true);
+            messageMapper.update(null, uw2);
+
+            // 重置本方向会话行（unread_count / last_message_id），对方行不受影响
+            if (conversationService != null) {
+                conversationService.clearConversation(currentUserId, friendId);
+            }
             return Result.success("已清空");
         }
         return Result.success("删除成功");

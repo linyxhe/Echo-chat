@@ -11,7 +11,8 @@
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <spring-boot.version>3.0.2</spring-boot.version>
+        <spring-boot.version>3.5.14</spring-boot.version>
+        <langchain4j.version>1.18.1-beta28</langchain4j.version>
     </properties>
     <dependencies>
         <dependency>
@@ -58,6 +59,14 @@
             <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
+        <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
         </dependency>
@@ -93,6 +102,40 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
+        </dependency>
+
+        <!-- AI Gateway: OpenAI-compatible (DeepSeek) 流式聊天模型。
+             注：langchain4j 的 Spring Boot starter 仅以 -betaXX 版号发布（langchain4j-spring 项目一贯如此），
+             故在此直接钉版本，不使用 langchain4j-bom（其版号为稳定版，与 starter 不对齐）。 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
+
+        <!-- 知识库 RAG：聚合模块提供 DocumentSplitters / TextDocumentParser 等（稳定版 1.18.1，与 core 对齐）。 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+            <version>1.18.1</version>
+        </dependency>
+        <!-- 本地中文嵌入（ONNX 打包，512 维，无需 API key）。嵌入模块仅发布 -betaXX 版号，与 starter 一致。 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-embeddings-bge-small-zh-v15</artifactId>
+            <version>1.18.1-beta28</version>
+        </dependency>
+
+        <!-- 知识库文档解析：PDF（PDFBox）与 Word .docx（Apache POI），供 KbService.extractText 使用。 -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.8</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.5.1</version>
         </dependency>
     </dependencies>
     <dependencyManagement>

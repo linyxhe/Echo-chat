@@ -11,6 +11,7 @@
       <el-button type="primary" @click="fetchUsers">搜索</el-button>
     </div>
 
+    <div class="table-scroll">
     <el-table :data="users" v-loading="loading" stripe style="width: 100%">
       <el-table-column prop="id" label="ID" width="90" />
       <el-table-column prop="username" label="用户名" min-width="160" />
@@ -41,6 +42,7 @@
         </template>
       </el-table-column>
     </el-table>
+    </div>
 
     <div class="pager">
       <el-pagination
@@ -143,5 +145,24 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+
+@media (max-width: 768px) {
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .toolbar :deep(.el-input) {
+    flex: 1 1 180px;
+  }
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .table-scroll :deep(.el-table) {
+    min-width: 760px;
+  }
+  .pager {
+    justify-content: center;
+  }
 }
 </style>

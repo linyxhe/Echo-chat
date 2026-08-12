@@ -28,6 +28,10 @@ export default defineConfig({
                 target: "http://localhost:8088",
                 changeOrigin: true,
             },
+            "/files": {
+                target: "http://localhost:8088",
+                changeOrigin: true,
+            },
             // WebSocket 代理
             "/ws": {
                 target: "ws://localhost:8088",

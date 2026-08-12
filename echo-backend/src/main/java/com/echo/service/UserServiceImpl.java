@@ -155,7 +155,15 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             existingUser.setAvatarUrl(user.getAvatarUrl());
         }
         // 不允许随意修改邮箱，除非走修改邮箱流程
-        
+
+        // 隐私开关（Boolean 不能走 hasText，需 null 守卫）
+        if (user.getShowOnlineStatus() != null) {
+            existingUser.setShowOnlineStatus(user.getShowOnlineStatus());
+        }
+        if (user.getShowReadReceipts() != null) {
+            existingUser.setShowReadReceipts(user.getShowReadReceipts());
+        }
+
         existingUser.setUpdatedAt(LocalDateTime.now());
         updateById(existingUser);
 

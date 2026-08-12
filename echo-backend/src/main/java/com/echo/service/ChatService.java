@@ -21,12 +21,18 @@ public interface ChatService extends IService<Message> {
     Result<Object> getConversations(Long currentUserId, Integer page, Integer size);
     
     /**
-     * 上传文件
+     * 上传文件（receiverId 与 groupId 二选一）
      */
-    Result<Object> uploadFile(MultipartFile file, Long receiverId);
+    Result<Object> uploadFile(MultipartFile file, Long receiverId, Long groupId);
     
     /**
      * 删除聊天记录
      */
     Result<Object> deleteMessages(Long currentUserId, Long friendId, String deleteType, String beforeTime);
+
+    /** 隐藏/恢复当前用户视角的会话，不修改消息数据。 */
+    Result<Object> setConversationArchived(Long currentUserId, Long friendId, boolean archived);
+
+    /** 设置当前用户视角的会话置顶状态。 */
+    Result<Object> setConversationPinned(Long currentUserId, Long friendId, boolean pinned);
 }

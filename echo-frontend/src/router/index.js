@@ -51,6 +51,16 @@ const router = createRouter({
           component: () => import("../views/ChatView.vue"),
         },
         {
+          path: "ai-assistant/new",
+          name: "ai-assistant-new",
+          component: () => import("../views/AiAssistantCreateView.vue"),
+        },
+        {
+          path: "ai-assistant/knowledge",
+          name: "ai-assistant-knowledge",
+          component: () => import("../views/AiAssistantKnowledgeView.vue"),
+        },
+        {
           path: "friends",
           name: "friends",
           component: () => import("../views/FriendView.vue"),
@@ -97,6 +107,11 @@ const router = createRouter({
           path: "config",
           name: "admin-config",
           component: () => import("../views/admin/SystemConfigView.vue"),
+        },
+        {
+          path: "kb",
+          name: "admin-kb",
+          component: () => import("../views/admin/KnowledgeBaseView.vue"),
         },
       ],
     },

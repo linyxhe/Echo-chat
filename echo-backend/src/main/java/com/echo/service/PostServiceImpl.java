@@ -38,21 +38,13 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
     @Autowired
     private SystemConfigMapper systemConfigMapper;
 
+    @Autowired
+    private ContentModerationService contentModerationService;
+
     @Override
     public Result<Object> createPost(Long userId, Post post) {
-        // 敏感词过滤
-        QueryWrapper<SystemConfig> configQuery = new QueryWrapper<>();
-        configQuery.eq("config_key", "sensitive.words");
-        SystemConfig config = systemConfigMapper.selectOne(configQuery);
-        
-        if (config != null && config.getConfigValue() != null) {
-            String[] words = config.getConfigValue().split(",");
-            for (String word : words) {
-                if (org.springframework.util.StringUtils.hasText(word) && post.getContent().contains(word.trim())) {
-                    return Result.fail("内容包含敏感词: " + word);
-                }
-            }
-        }
+        String matchedPostWord = contentModerationService.findMatchedWord(post.getContent());
+        if (matchedPostWord != null) return Result.fail("内容包含敏感词: " + matchedPostWord);
         
         post.setUserId(userId);
         post.setLikeCount(0);
@@ -174,7 +166,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
         
         Post post = postMapper.selectById(postId);
         if (post == null) return Result.fail("动态不存在");
-        
+
         if (existing != null) {
             // 取消点赞
             postLikeMapper.deleteById(existing.getId());
@@ -198,6 +190,9 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
     public Result<Object> createComment(Long userId, Long postId, Comment comment) {
         Post post = postMapper.selectById(postId);
         if (post == null) return Result.fail("动态不存在");
+
+        String matchedCommentWord = contentModerationService.findMatchedWord(comment.getContent());
+        if (matchedCommentWord != null) return Result.fail("评论包含敏感词: " + matchedCommentWord);
         
         comment.setUserId(userId);
         comment.setPostId(postId);

@@ -38,6 +38,12 @@ public class FriendshipServiceImpl extends ServiceImpl<FriendshipMapper, Friends
     @Autowired
     private FriendshipMapper friendshipMapper;
 
+    @Autowired
+    private PresenceService presenceService;
+
+    @Autowired
+    private NotificationService notificationService;
+
     @Override
     public Result<Object> searchUsers(String keyword, Integer page, Integer size) {
         Page<User> userPage = new Page<>(page, size);
@@ -89,7 +95,15 @@ public class FriendshipServiceImpl extends ServiceImpl<FriendshipMapper, Friends
         request.setUpdatedAt(LocalDateTime.now());
         
         friendRequestMapper.insert(request);
-        
+
+        // 通知接收者
+        if (notificationService != null) {
+            User sender = userMapper.selectById(currentUserId);
+            String nickname = sender != null ? sender.getNickname() : "有人";
+            notificationService.notify(targetUserId, "FRIEND_REQUEST", "新的好友请求",
+                    nickname + " 申请加你为好友", request.getId());
+        }
+
         return Result.success("好友请求已发送");
     }
 
@@ -151,11 +165,17 @@ public class FriendshipServiceImpl extends ServiceImpl<FriendshipMapper, Friends
         
         if ("ACCEPT".equals(action)) {
             request.setStatus("ACCEPTED");
-            
-            // 创建双向好友关系
-            createFriendship(request.getSenderId(), request.getReceiverId(), request.getRemark()); // 对方的备注用请求里的
-            createFriendship(request.getReceiverId(), request.getSenderId(), remark); // 我的备注用处理时填的
-            
+
+            // 创建双向好友关系。验证信息（request.getRemark()）只是请求附言，不作为任何一方的备注；
+            // 备注默认留空（显示对方昵称），用户可后续自行修改。
+            createFriendship(request.getSenderId(), request.getReceiverId(), null);
+            createFriendship(request.getReceiverId(), request.getSenderId(), null);
+
+            // 通知请求方
+            if (notificationService != null) {
+                notificationService.notify(request.getSenderId(), "FRIEND_REQUEST_ACCEPTED", "好友请求通过",
+                        "对方通过了你的好友申请", request.getId());
+            }
         } else if ("REJECT".equals(action)) {
             request.setStatus("REJECTED");
         } else {
@@ -210,7 +230,10 @@ public class FriendshipServiceImpl extends ServiceImpl<FriendshipMapper, Friends
                 // 更好的做法是用联表查询，但MyBatis-Plus默认不支持多表，需要XML。这里先简单处理。
                 map.put("nickname", friend.getNickname());
                 map.put("avatar", friend.getAvatarUrl());
-                // map.put("online", ...); // 需要Redis状态
+                // 隐私：对方关闭「展示在线状态」时对他人隐藏
+                boolean online = presenceService != null && presenceService.isOnline(f.getFriendId())
+                        && Boolean.TRUE.equals(friend.getShowOnlineStatus());
+                map.put("online", online);
             }
             return map;
         }).collect(Collectors.toList());

@@ -9,6 +9,7 @@
       <el-button type="primary" @click="fetchReports">刷新</el-button>
     </div>
 
+    <div class="table-scroll">
     <el-table :data="reports" v-loading="loading" stripe style="width: 100%">
       <el-table-column prop="id" label="ID" width="90" />
       <el-table-column prop="reporterId" label="举报人ID" width="100" />
@@ -53,6 +54,7 @@
         </template>
       </el-table-column>
     </el-table>
+    </div>
 
     <div class="pager">
       <el-pagination
@@ -130,5 +132,21 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+
+@media (max-width: 768px) {
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .table-scroll :deep(.el-table) {
+    min-width: 880px;
+  }
+  .pager {
+    justify-content: center;
+  }
 }
 </style>

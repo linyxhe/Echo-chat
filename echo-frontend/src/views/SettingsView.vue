@@ -2,7 +2,12 @@
   <div class="settings-view">
     <el-tabs>
       <el-tab-pane label="基本资料">
-        <el-form :model="userInfo" label-width="80px" class="settings-form">
+        <el-form
+          :model="userInfo"
+          :label-width="isMobile ? 'auto' : '80px'"
+          :label-position="isMobile ? 'top' : 'right'"
+          class="settings-form"
+        >
           <el-form-item label="头像">
             <el-avatar
               :size="80"
@@ -30,7 +35,12 @@
         </el-form>
       </el-tab-pane>
       <el-tab-pane label="安全设置">
-        <el-form :model="passwordForm" label-width="80px" class="settings-form">
+        <el-form
+          :model="passwordForm"
+          :label-width="isMobile ? 'auto' : '80px'"
+          :label-position="isMobile ? 'top' : 'right'"
+          class="settings-form"
+        >
           <el-form-item label="旧密码">
             <el-input
               type="password"
@@ -52,6 +62,30 @@
               >修改密码</el-button
             >
           </el-form-item>
+          <el-divider>账户操作</el-divider>
+          <el-form-item>
+            <el-button type="danger" plain @click="logout">退出登录</el-button>
+          </el-form-item>
+        </el-form>
+      </el-tab-pane>
+      <el-tab-pane label="隐私">
+        <el-form
+          :model="userInfo"
+          :label-width="isMobile ? 'auto' : '80px'"
+          :label-position="isMobile ? 'top' : 'right'"
+          class="settings-form"
+        >
+          <el-form-item label="展示在线状态">
+            <el-switch v-model="userInfo.showOnlineStatus" />
+            <span class="privacy-tip">开启后好友能看到你在线</span>
+          </el-form-item>
+          <el-form-item label="展示已读回执">
+            <el-switch v-model="userInfo.showReadReceipts" />
+            <span class="privacy-tip">开启后好友及群成员能看到你的已读状态</span>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="updateProfile">保存隐私设置</el-button>
+          </el-form-item>
         </el-form>
       </el-tab-pane>
     </el-tabs>
@@ -60,13 +94,17 @@
 
 <script setup>
 import { ref, reactive, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import request, { resolveUploadUrl } from "@/util/request";
 import defaultAvatar from "@/img/avatar/Member001.jpg";
 import { ElMessage } from "element-plus";
+import { useMobileViewport } from "@/composables/useMobileViewport";
 
 const userInfo = ref({});
+const router = useRouter();
 const currentUserId = Number(localStorage.getItem("userId"));
 const passwordLoading = ref(false);
+const { isMobile } = useMobileViewport();
 const passwordForm = reactive({
   oldPassword: "",
   newPassword: "",
@@ -154,6 +192,11 @@ const updatePassword = async () => {
   }
 };
 
+const logout = () => {
+  localStorage.clear();
+  router.push("/login");
+};
+
 onMounted(() => {
   fetchProfile();
 });
@@ -169,5 +212,35 @@ onMounted(() => {
 }
 .avatar-uploader {
   display: inline-block;
+}
+.privacy-tip {
+  margin-left: 12px;
+  font-size: 12px;
+  color: #999;
+}
+
+@media (max-width: 768px) {
+  .settings-view {
+    padding: 16px 12px;
+    max-width: none;
+  }
+
+  .settings-view :deep(.el-tabs__nav-scroll) {
+    overflow-x: auto;
+  }
+
+  .settings-form {
+    margin-top: 12px;
+  }
+
+  .avatar-uploader {
+    display: block;
+    margin-top: 12px;
+  }
+
+  .avatar-uploader :deep(.el-button) {
+    margin-left: 0 !important;
+    min-height: 40px;
+  }
 }
 </style>
