@@ -115,7 +115,7 @@ import defaultAvatar from "@/img/avatar/Member001.jpg";
 import request, { resolveUploadUrl } from "@/util/request";
 import { useWebSocket } from "@/util/webSocket";
 import { useMobileViewport } from "@/composables/useMobileViewport";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElNotification } from "element-plus";
 
 const router = useRouter();
 const route = useRoute();
@@ -164,12 +164,61 @@ const fetchUserInfo = async () => {
 const unreadCount = ref(0);
 const notifications = ref([]);
 const ws = useWebSocket({ endpoint: "/ws" });
+const notificationPollTimer = ref(null);
+const knownNotificationIds = new Set();
+const notificationStateReady = ref(false);
 
-ws.on("message", (event) => {
+/**
+ * Reminders are durable notifications, but a user should not have to open the
+ * bell menu to discover them.  Keep the toast idempotent so reconnects and the
+ * polling fallback cannot show the same reminder repeatedly.
+ */
+const showReminderPopup = (notification) => {
+  if (!notification || notification.type !== "AI_REMINDER" || notification.id == null) return;
+  const id = String(notification.id);
+  if (knownNotificationIds.has(id)) return;
+  knownNotificationIds.add(id);
+  ElNotification({
+    title: notification.title || "AI提醒",
+    message: notification.content || "到时间了",
+    type: "warning",
+    position: "top-right",
+    duration: 0,
+    showClose: true,
+    customClass: "ai-reminder-notification",
+  });
+
+  // If the tab is in the background, use the native notification only when
+  // the user has already granted permission. Never request permission here.
+  if (document.visibilityState !== "visible" && typeof window.Notification === "function"
+      && window.Notification.permission === "granted") {
+    try {
+      new window.Notification(notification.title || "AI提醒", {
+        body: notification.content || "到时间了",
+        tag: `echo-ai-reminder-${id}`,
+      });
+    } catch (e) {
+      // Native notifications are optional; the durable bell notification remains.
+    }
+  }
+};
+
+const handleNotificationFrame = (event) => {
   let msg;
   try { msg = JSON.parse(event.data); } catch (e) { return; }
-  if (msg && msg.type === "NOTIFICATION") refreshNotifications();
-});
+  if (!msg || msg.type !== "NOTIFICATION") return;
+  const data = msg.data || {};
+  showReminderPopup(data);
+  refreshNotifications();
+};
+
+const isRecentReminder = (notification) => {
+  if (!notification || notification.type !== "AI_REMINDER" || !notification.createdAt) return false;
+  const createdAt = new Date(notification.createdAt).getTime();
+  return Number.isFinite(createdAt) && Date.now() - createdAt <= 2 * 60 * 1000;
+};
+
+ws.on("message", handleNotificationFrame);
 
 const refreshNotifications = async () => {
   try {
@@ -177,7 +226,23 @@ const refreshNotifications = async () => {
       request.get("/notifications", { params: { limit: 20 } }),
       request.get("/notifications/unread-count"),
     ]);
-    if (listRes.code === 200) notifications.value = listRes.data || [];
+    if (listRes.code === 200) {
+      const next = listRes.data || [];
+      // The first pull hydrates the id set silently; later pulls also cover a
+      // missed WebSocket frame (sleeping mobile tab, proxy restart, etc.).
+      if (notificationStateReady.value) {
+        next.filter((n) => !n.isRead).forEach(showReminderPopup);
+      } else {
+        // A refresh immediately after the scheduled time should still be
+        // explicit, while older historical reminders remain in the bell only.
+        next.filter((n) => n && n.isRead !== true && isRecentReminder(n)).forEach(showReminderPopup);
+        next.forEach((n) => {
+          if (n && n.id != null && !isRecentReminder(n)) knownNotificationIds.add(String(n.id));
+        });
+        notificationStateReady.value = true;
+      }
+      notifications.value = next;
+    }
     if (countRes.code === 200) unreadCount.value = countRes.data?.unreadCount || 0;
   } catch (e) {}
 };
@@ -228,6 +293,10 @@ const onWindowFocus = () => {
 onMounted(() => {
   fetchUserInfo();
   refreshNotifications();
+  // WebSocket is the fast path. Polling is a low-frequency fallback so a
+  // reminder still becomes visible after a temporary disconnect or mobile
+  // browser sleep/wake cycle.
+  notificationPollTimer.value = window.setInterval(refreshNotifications, 10000);
   window.addEventListener("profile-updated", handleProfileUpdated);
   window.addEventListener("focus", onWindowFocus);
 });
@@ -237,6 +306,11 @@ const handleProfileUpdated = (e) => {
 };
 
 onBeforeUnmount(() => {
+  if (notificationPollTimer.value) {
+    window.clearInterval(notificationPollTimer.value);
+    notificationPollTimer.value = null;
+  }
+  ws.off("message", handleNotificationFrame);
   window.removeEventListener("profile-updated", handleProfileUpdated);
   window.removeEventListener("focus", onWindowFocus);
 });
@@ -374,9 +448,22 @@ onBeforeUnmount(() => {
   margin-top: 4px;
 }
 
+/* Element Plus teleports notifications to body; keep the persistent reminder
+   readable on narrow mobile browsers instead of letting the 330px default
+   overflow the viewport. */
+:global(.ai-reminder-notification) {
+  width: min(380px, calc(100vw - 32px)) !important;
+  box-sizing: border-box;
+}
+
 @media (max-width: 768px) {
   .home-container {
     flex-direction: column;
+  }
+
+  :global(.ai-reminder-notification) {
+    width: calc(100vw - 32px) !important;
+    margin-right: 16px !important;
   }
 
   .sidebar {

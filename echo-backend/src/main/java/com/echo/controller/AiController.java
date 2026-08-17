@@ -9,6 +9,8 @@ import com.echo.service.AiAssistantService;
 import com.echo.service.KbIndexWorker;
 import com.echo.service.KbService;
 import com.echo.service.UserService;
+import com.echo.service.AgentConfirmationService;
+import com.echo.service.AgentReminderService;
 import com.echo.vo.Result;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
@@ -54,6 +56,12 @@ public class AiController {
     @Autowired
     private KbIndexWorker kbIndexWorker;
 
+    @Autowired
+    private AgentConfirmationService agentConfirmationService;
+
+    @Autowired
+    private AgentReminderService agentReminderService;
+
     /** 返回 AI 助手身份信息（botUserId / botNickname / botAvatar / enabled），前端据此注入合成会话。 */
     @GetMapping("/bot-info")
     public Result<Object> botInfo() {
@@ -96,7 +104,13 @@ public class AiController {
         Object legacyCategory = body == null ? null : body.get("knowledgeCategory");
         if (categories.isEmpty() && legacyCategory != null) categories.add(String.valueOf(legacyCategory));
         String operations = body == null || body.get("defaultOperations") == null ? null : String.valueOf(body.get("defaultOperations"));
-        return aiAssistantService.create(uid, name, type, persona, categories, operations);
+        List<String> agentTools = null;
+        Object toolList = body == null ? null : body.get("agentTools");
+        if (toolList instanceof Iterable<?> iterable) {
+            agentTools = new ArrayList<>();
+            for (Object item : iterable) if (item != null) agentTools.add(String.valueOf(item));
+        }
+        return aiAssistantService.create(uid, name, type, persona, categories, operations, agentTools);
     }
 
     /** 彻底删除用户自建 AI 助手及其聊天记录、私有知识库。系统助手不支持删除。 */
@@ -116,6 +130,92 @@ public class AiController {
         if (uid == null) return Result.fail("未登录");
         String remark = body == null || body.get("remark") == null ? null : String.valueOf(body.get("remark"));
         return aiAssistantService.updateRemark(uid, assistantId, remark);
+    }
+
+    @GetMapping("/assistants/{assistantId}/tools")
+    public Result<Object> assistantTools(@PathVariable Long assistantId) {
+        Long uid = getCurrentUserId();
+        if (uid == null) return Result.fail("未登录");
+        com.echo.pojo.AiAssistant assistant = aiAssistantService.findOwnedById(uid, assistantId);
+        return assistant == null ? Result.fail("AI 助手不存在或无权访问")
+                : Result.success(Map.of("agentTools", aiAssistantService.listAgentTools(assistant)));
+    }
+
+    @PutMapping("/assistants/{assistantId}/tools")
+    public Result<Object> updateAssistantTools(@PathVariable Long assistantId,
+                                                @RequestBody Map<String, Object> body) {
+        Long uid = getCurrentUserId();
+        if (uid == null) return Result.fail("未登录");
+        List<String> tools = new ArrayList<>();
+        Object toolList = body == null ? null : body.get("agentTools");
+        if (toolList instanceof Iterable<?> iterable) {
+            for (Object item : iterable) if (item != null) tools.add(String.valueOf(item));
+        }
+        return aiAssistantService.updateAgentTools(uid, assistantId, tools);
+    }
+
+    /** Pending Agent proposals are returned only to their owner and expire server-side. */
+    @GetMapping("/confirmations")
+    public Result<Object> pendingConfirmations() {
+        Long uid = getCurrentUserId();
+        return uid == null ? Result.fail("未登录") : Result.success(agentConfirmationService.listPending(uid));
+    }
+
+    @PostMapping("/confirmations/{token}/confirm")
+    public Result<Object> confirmAgentAction(@PathVariable String token) {
+        Long uid = getCurrentUserId();
+        if (uid == null) return Result.fail("未登录");
+        try {
+            return Result.success(agentConfirmationService.confirm(uid, token));
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
+        }
+    }
+
+    @PostMapping("/confirmations/{token}/reject")
+    public Result<Object> rejectAgentAction(@PathVariable String token) {
+        Long uid = getCurrentUserId();
+        if (uid == null) return Result.fail("未登录");
+        return agentConfirmationService.reject(uid, token) ? Result.success("已取消") : Result.fail("确认项不存在、已处理或已过期");
+    }
+
+    @GetMapping("/memories")
+    public Result<Object> memories() {
+        Long uid = getCurrentUserId();
+        return uid == null ? Result.fail("未登录") : Result.success(agentConfirmationService.listMemories(uid));
+    }
+
+    @DeleteMapping("/memories/{memoryId}")
+    public Result<Object> deleteMemory(@PathVariable Long memoryId) {
+        Long uid = getCurrentUserId();
+        if (uid == null) return Result.fail("未登录");
+        return agentConfirmationService.deleteMemory(uid, memoryId) ? Result.success("已删除") : Result.fail("记忆不存在或无权删除");
+    }
+
+    @GetMapping("/drafts")
+    public Result<Object> drafts() {
+        Long uid = getCurrentUserId();
+        return uid == null ? Result.fail("未登录") : Result.success(agentConfirmationService.listDrafts(uid));
+    }
+
+    @DeleteMapping("/drafts/{draftId}")
+    public Result<Object> deleteDraft(@PathVariable Long draftId) {
+        Long uid = getCurrentUserId();
+        if (uid == null) return Result.fail("未登录");
+        return agentConfirmationService.deleteDraft(uid, draftId) ? Result.success("已删除") : Result.fail("草稿不存在或无权删除");
+    }
+
+    @GetMapping("/reminders")
+    public Result<Object> reminders() {
+        Long uid = getCurrentUserId();
+        return uid == null ? Result.fail("未登录") : Result.success(agentReminderService.list(uid));
+    }
+
+    @DeleteMapping("/reminders/{reminderId}")
+    public Result<Object> cancelReminder(@PathVariable Long reminderId) {
+        Long uid = getCurrentUserId();
+        if (uid == null) return Result.fail("未登录");
+        return agentReminderService.cancel(uid, reminderId) ? Result.success("提醒已取消") : Result.fail("提醒不存在、已触发或无权取消");
     }
 
     @GetMapping("/assistants/{assistantId}/knowledge")

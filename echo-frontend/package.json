@@ -1,6 +1,8 @@
 {
   "name": "online-chat-room",
-  "version": "0.0.0",
+  "version": "1.0.2",
+  "description": "Echo Chat desktop client",
+  "author": "Echo Chat",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -8,8 +10,7 @@
     "dev": "node ./scripts/dev.mjs",
     "dev:vite": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "electron:build": "vite build && electron-builder --win"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@uppy/core": "^5.2.0",
@@ -32,7 +33,8 @@
     "appId": "com.echo.chatroom",
     "productName": "EchoChat",
     "directories": {
-      "output": "release"
+      "output": "release-brand",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
@@ -40,11 +42,20 @@
       "package.json"
     ],
     "win": {
+      "icon": "icon.ico",
       "signAndEditExecutable": false,
       "target": [
         "nsis",
         "portable"
       ]
+    },
+    "nsis": {
+      "artifactName": "EchoChat-Setup-${version}.${ext}",
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico"
+    },
+    "portable": {
+      "artifactName": "EchoChat-Portable-${version}.${ext}"
     }
   }
 }

@@ -52,9 +52,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // 允许匿名访问的URL
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/auth/**", "/admin/login", "/ws/**", "/files/*/content", "/internal/tusd/hooks", "/error").permitAll()
+                        .requestMatchers("/auth/**", "/admin/login", "/ws/**", "/files/*/content", "/client-releases/public", "/client-releases/*/download", "/internal/tusd/hooks", "/error").permitAll()
                         // 放行前端静态资源（后端直接托管 dist 时，未登录用户也需加载登录页/JS/CSS）
-                        .requestMatchers("/", "/index.html", "/config.js", "/favicon.ico",
+                        .requestMatchers("/", "/index.html", "/config.js", "/favicon.ico", "/favicon.png",
                                 "/assets/**", "/css/**", "/js/**", "/img/**", "/fonts/**").permitAll()
                         // 其他所有请求需要认证
                         .anyRequest().authenticated()

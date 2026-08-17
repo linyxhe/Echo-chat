@@ -173,6 +173,9 @@
           </el-button>
         </div>
         <div class="chat-header-actions" v-else>
+          <el-button v-if="currentCustomAiAssistant" link title="管理助手" @click="openAiAssistantManage">
+            <el-icon><Setting /></el-icon>
+          </el-button>
           <el-button link title="管理私有知识库" @click="openAiKnowledge">
             <el-icon><FolderOpened /></el-icon>
           </el-button>
@@ -257,9 +260,22 @@
             class="avatar"
           />
         </div>
+        <div v-for="confirmation in visibleAiConfirmations" :key="confirmation.token" class="agent-confirmation-card">
+          <div class="agent-confirmation-head">
+            <strong>{{ confirmationLabel(confirmation.actionType) }}</strong>
+            <el-tag size="small" type="warning" effect="light">等待确认</el-tag>
+          </div>
+          <p>{{ confirmation.summary }}</p>
+          <div v-if="confirmation.preview" class="agent-confirmation-preview">{{ confirmation.preview }}</div>
+          <div class="agent-confirmation-actions">
+            <el-button size="small" @click="completeAiConfirmation(confirmation, false)">取消</el-button>
+            <el-button size="small" type="primary" @click="completeAiConfirmation(confirmation, true)">{{ confirmation.actionType === "MEMORY" || confirmation.actionType === "DRAFT" || confirmation.actionType === "REMINDER" ? "确认保存" : "确认查询" }}</el-button>
+          </div>
+          <small>{{ confirmationHint(confirmation.actionType) }}</small>
+        </div>
         <div v-if="aiThinking || activeAiStreamId" class="message-item ai-thinking-item">
           <div class="message-content ai-thinking-bubble">
-            <span>AI 正在思考</span><span class="ai-thinking-dots"><i></i><i></i><i></i></span>
+            <span>{{ aiProgress || "AI 正在思考" }}</span><span class="ai-thinking-dots"><i></i><i></i><i></i></span>
             <el-button link type="danger" size="small" class="ai-stop-button" @click="stopAiGeneration">停止生成</el-button>
           </div>
         </div>
@@ -338,6 +354,7 @@
         ></video>
       </div>
       <div class="call-status">{{ callStatusText }}</div>
+      <div class="call-build-id">{{ rtcBuildLabel }}</div>
       <template #footer>
         <el-button
           v-if="incomingCallPending"
@@ -417,11 +434,12 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ArrowLeft, ChatDotRound, Delete, FolderAdd, FolderOpened, MagicStick, Microphone, MoreFilled, Plus, Search, User, VideoCamera } from "@element-plus/icons-vue";
+import { ArrowLeft, ChatDotRound, Delete, FolderAdd, FolderOpened, MagicStick, Microphone, MoreFilled, Plus, Search, Setting, User, VideoCamera } from "@element-plus/icons-vue";
 import request, { resolveUploadUrl, clearAuthStorage } from "@/util/request";
 import { useWebSocket } from "@/util/webSocket";
 import { useMobileViewport } from "@/composables/useMobileViewport";
 import { SMALL_FILE_LIMIT, uploadChatFileWithTus } from "@/util/tusUpload";
+import { DirectWebRtcCall } from "@/util/directWebRtcCall";
 import defaultAvatar from "@/img/avatar/Member001.jpg";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { marked } from "marked";
@@ -449,8 +467,17 @@ const aiBotIds = computed(() => new Set([
   ...aiAssistants.value.map((assistant) => Number(assistant.botUserId)),
 ]));
 const isAiBotId = (id) => id != null && aiBotIds.value.has(Number(id));
+const currentCustomAiAssistant = computed(() => aiAssistants.value.find(
+  (assistant) => currentChatType.value === "AI" && Number(assistant.botUserId) === Number(currentFriendId.value)
+) || null);
 const aiThinking = ref(false); // 发给 AI 后、首个 token 前显示「正在思考」
 const activeAiStreamId = ref(null);
+const aiProgress = ref(""); // 仅展示服务端脱敏后的 Agent 工具进度，不展示参数或内部推理
+const pendingAiConfirmations = ref([]);
+const visibleAiConfirmations = computed(() => pendingAiConfirmations.value.filter((confirmation) =>
+  currentChatType.value === "AI" &&
+  (confirmation.botUserId == null || Number(confirmation.botUserId) === Number(currentFriendId.value))
+));
 
 // ===== 群聊（并入消息页） =====
 const currentChatType = ref(null); // 'FRIEND' | 'GROUP' | 'AI'
@@ -613,77 +640,100 @@ const remoteStream = ref(null);
 const localVideoRef = ref(null);
 const remoteVideoRef = ref(null);
 const remoteAudioRef = ref(null);
+const dynamicIceServers = ref([]);
+const dynamicIceTransportPolicy = ref(null);
+const dynamicTurnConfigured = ref(false);
+const rtcCredentialExpiresAt = ref(null);
+let rtcConfigPromise = null;
+let rtcConfigLoadedAt = 0;
+let rtcConfigExpiresAt = 0;
 let peerConnection = null;
+let directCall = null;
 let pendingIceCandidates = [];
-let iceGatherTimeout = null;
-let isCallRestart = false; // TURN 重连标记，callee 收到 RESTART 后自动接受新 OFFER
+let callTimeout = null;
+let disconnectTimeout = null;
 
 // ========== WebRTC ICE 服务器配置 ==========
 // 多 STUN + TURN 中继，适配 WiFi / 4G / 5G / 3G / 对称 NAT 等复杂网络
-const DEFAULT_ICE_SERVERS = [
+const DEFAULT_STUN_SERVERS = [
   // STUN 服务器（发现公网 IP，尝试直连）
   { urls: "stun:stun.miwifi.com:3478" },           // 小米路由器 STUN，国内速度快
   { urls: "stun:stun.chat.bilibili.com:3478" },     // Bilibili STUN，国内可用
   { urls: "stun:stun.moonlight-stream.org:3478" },  // 备用
   { urls: "stun:stun.l.google.com:19302" },         // Google（部分网络不可用）
-  // TURN 中继服务器（STUN 失败时的兜底，保证通话可用）
-  // 公共 TURN 服务（免费额度有限，生产环境建议自建）
-  {
-    urls: "turn:openrelay.metered.ca:80",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443?transport=tcp",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
 ];
-
-const PRODUCTION_ICE_SERVERS = [
-  { urls: "stun:turn.linyxhe.top:3478" },
-  {
-    urls: [
-      "turn:turn.linyxhe.top:3478?transport=udp",
-      "turn:turn.linyxhe.top:3478?transport=tcp",
-    ],
-    username: "echo_turn",
-    credential: "KmP9xR2yQwN5tZ7vL4Jc",
-  },
-];
-
-const isProductionHost = () =>
-  typeof window !== "undefined" &&
-  (window.location.hostname === "www.linyxhe.top" ||
-    window.location.hostname === "linyxhe.top");
 
 // 支持从 config.js 运行时配置覆盖
 const getIceServers = () => {
-  const runtime = typeof window !== "undefined" ? window.__APP_CONFIG__ : null;
-  if (runtime && Array.isArray(runtime.ICE_SERVERS) && runtime.ICE_SERVERS.length > 0) {
-    return runtime.ICE_SERVERS;
+  return [...dynamicIceServers.value];
+};
+
+const getIceTransportPolicy = () => {
+  if (dynamicIceTransportPolicy.value === "relay") return "relay";
+  return "all";
+};
+
+const runtimeConfig = () =>
+  (typeof window !== "undefined" && window.__APP_CONFIG__) || {};
+
+const rtcBuildLabel = computed(() => {
+  const config = runtimeConfig();
+  return `${config.ENVIRONMENT || "development"} · ${config.BUILD_ID || "vite-dev"}`;
+});
+
+const rtcDiagnostic = (stage, details = {}) => {
+  const config = runtimeConfig();
+  console.info("[RTC]", {
+    stage,
+    buildId: config.BUILD_ID || "vite-dev",
+    environment: config.ENVIRONMENT || "development",
+    callId: callId.value,
+    ...details,
+  });
+};
+
+const loadRtcConfig = async () => {
+  // coturn TURN REST 凭据有有效期，不能在应用整个生命周期内永久复用。
+  // 五分钟缓存既避免每次点击重复请求，也确保短期凭据会及时刷新。
+  const cacheDeadline = rtcConfigExpiresAt > 0
+    ? Math.min(rtcConfigLoadedAt + 5 * 60 * 1000, rtcConfigExpiresAt - 60 * 1000)
+    : rtcConfigLoadedAt + 5 * 60 * 1000;
+  if (rtcConfigPromise && Date.now() < cacheDeadline) {
+    return rtcConfigPromise;
   }
-  if (isProductionHost()) return PRODUCTION_ICE_SERVERS;
-  return DEFAULT_ICE_SERVERS;
+  rtcConfigPromise = request.get("/rtc/config")
+    .then((result) => {
+      const data = result?.data || {};
+      dynamicIceServers.value = Array.isArray(data.iceServers) ? data.iceServers : [];
+      dynamicIceTransportPolicy.value = data.iceTransportPolicy === "relay" ? "relay" : "all";
+      dynamicTurnConfigured.value = data.turnConfigured === true && dynamicIceServers.value.length > 0;
+      rtcCredentialExpiresAt.value = data.credentialExpiresAt || null;
+      rtcConfigExpiresAt = data.credentialExpiresAt
+        ? Date.parse(data.credentialExpiresAt)
+        : 0;
+      rtcConfigLoadedAt = Date.now();
+      rtcDiagnostic("rtc-config-loaded", {
+        turnConfigured: dynamicTurnConfigured.value,
+        iceTransportPolicy: dynamicIceTransportPolicy.value,
+        credentialExpiresAt: rtcCredentialExpiresAt.value,
+      });
+      if (!dynamicTurnConfigured.value) {
+        throw new Error("服务端未配置可用 TURN，无法建立跨网络通话");
+      }
+      return data;
+    })
+    .catch((error) => {
+      rtcConfigPromise = null;
+      rtcConfigLoadedAt = 0;
+      rtcConfigExpiresAt = 0;
+      rtcDiagnostic("rtc-config-failed", { message: error?.message || "unknown" });
+      throw error;
+    });
+  return rtcConfigPromise;
 };
 
-const getIceTransportPolicy = (forceRelay = false) => {
-  if (forceRelay) return "relay";
-  const runtime = typeof window !== "undefined" ? window.__APP_CONFIG__ : null;
-  return runtime?.ICE_TRANSPORT_POLICY === "relay" || isProductionHost() ? "relay" : "all";
-};
-
-const isRelayTransportConfigured = () => getIceTransportPolicy(false) === "relay";
-
-// ICE 采集超时时间（毫秒）—— 超时后强制使用已收集到的候选
-const ICE_GATHER_TIMEOUT = 8000;
-// ICE 连接超时时间（毫秒）—— 超时后尝试 TURN 中继
-const ICE_CONNECT_TIMEOUT = 10000;
+// ICE 采集诊断时间（毫秒），只记录日志，不销毁仍可继续工作的连接。
+// SDP 交换完成后的 ICE 连接超时时间（毫秒）。
 
 const incomingCallPending = computed(
   () =>
@@ -703,6 +753,7 @@ const callDialogTitle = computed(() => {
     return callType.value === "VIDEO" ? "来电：视频通话" : "来电：语音通话";
   if (callStatus.value === "calling")
     return callType.value === "VIDEO" ? "正在呼叫（视频）" : "正在呼叫（语音）";
+  if (callStatus.value === "remote_ringing") return "对方正在响铃";
   if (callStatus.value === "connecting") return "正在连接";
   if (callStatus.value === "in_call")
     return callType.value === "VIDEO" ? "视频通话中" : "语音通话中";
@@ -711,7 +762,8 @@ const callDialogTitle = computed(() => {
 
 const callStatusText = computed(() => {
   if (incomingCallPending.value) return "对方正在呼叫你";
-  if (callStatus.value === "calling") return "等待对方接听...";
+  if (callStatus.value === "calling") return "通话请求已发送...";
+  if (callStatus.value === "remote_ringing") return "对方正在响铃...";
   if (callStatus.value === "connecting") return "正在建立连接...";
   if (callStatus.value === "in_call") return "已连接";
   return "";
@@ -760,8 +812,14 @@ ws.on("message", (event) => {
     setFriendOnline(msg.data?.userId, false);
   } else if (msg.type === "CALL_SIGNAL") {
     handleCallSignal(msg.data);
+  } else if (msg.type === "CALL_SIGNAL_ACK") {
+    handleCallSignalAck(msg.data);
   } else if (msg.type === "AI_STREAM_CHUNK") {
     handleAiChunk(msg.data);
+  } else if (msg.type === "AI_AGENT_EVENT") {
+    handleAiAgentEvent(msg.data);
+  } else if (msg.type === "AI_AGENT_CONFIRMATION") {
+    handleAiConfirmation(msg.data);
   } else if (msg.type === "AI_STREAM_DONE") {
     handleAiDone(msg.data);
   } else if (msg.type === "AI_STREAM_ERROR") {
@@ -780,24 +838,32 @@ const safeParseJson = (text) => {
 };
 
 const normalizeMessage = (msg) => {
-  if (!msg || !["FILE", "AUDIO"].includes(msg.messageType)) return msg;
+  if (!msg) return msg;
+  const persistedSources = Array.isArray(msg.aiSources)
+    ? msg.aiSources
+    : safeParseJson(msg.aiSources);
+  const normalized = Array.isArray(persistedSources)
+    ? { ...msg, aiSources: persistedSources }
+    : msg;
 
-  if (msg.fileUrl && msg.fileName) {
-    return msg;
+  if (!["FILE", "AUDIO"].includes(normalized.messageType)) return normalized;
+
+  if (normalized.fileUrl && normalized.fileName) {
+    return normalized;
   }
 
-  const info = safeParseJson(msg.content);
+  const info = safeParseJson(normalized.content);
   if (info && typeof info === "object") {
     return {
-      ...msg,
-      content: info.name || msg.content,
-      fileUrl: info.url || msg.fileUrl,
-      fileName: info.name || msg.fileName,
-      fileSize: info.size || msg.fileSize,
+      ...normalized,
+      content: info.name || normalized.content,
+      fileUrl: info.url || normalized.fileUrl,
+      fileName: info.name || normalized.fileName,
+      fileSize: info.size || normalized.fileSize,
     };
   }
 
-  return msg;
+  return normalized;
 };
 
 const getFileInfo = (msg) => {
@@ -1008,6 +1074,7 @@ const fetchConversations = async () => {
 const handleAiChunk = (data) => {
   if (!data || !data.streamId || data.delta == null) return;
   aiThinking.value = false; // 首个 token 到达，隐藏「正在思考」
+  aiProgress.value = "";
   if (!activeAiStreamId.value) activeAiStreamId.value = data.streamId;
   if (ignoredStreams.has(data.streamId)) return; // 清空会话后忽略在途流
   let msg = streamMessages.get(data.streamId);
@@ -1031,7 +1098,9 @@ const handleAiChunk = (data) => {
 
 const handleAiDone = (data) => {
   if (!data || !data.streamId) return;
+  if (data.confirmation) handleAiConfirmation({ confirmation: data.confirmation });
   aiThinking.value = false;
+  aiProgress.value = "";
   if (activeAiStreamId.value === data.streamId) activeAiStreamId.value = null;
   if (ignoredStreams.has(data.streamId)) {
     ignoredStreams.delete(data.streamId);
@@ -1054,6 +1123,9 @@ const handleAiDone = (data) => {
           data: { senderId: currentFriendId.value, messageIds: [finalMsg.id] },
         });
       }
+      // The confirmation frame is realtime, but a proxy/reconnect can drop it.
+      // The proposal is durable, so reloading it after DONE restores the card.
+      if (currentChatType.value === "AI") fetchAiConfirmations();
     }
     return;
   }
@@ -1075,6 +1147,7 @@ const handleAiDone = (data) => {
     });
   }
   scrollToBottom();
+  if (currentChatType.value === "AI") fetchAiConfirmations();
 };
 
 const updateAiConversationPreview = (message) => {
@@ -1092,6 +1165,7 @@ const updateAiConversationPreview = (message) => {
 const handleAiError = (data) => {
   if (!data || !data.streamId) return;
   aiThinking.value = false;
+  aiProgress.value = "";
   if (activeAiStreamId.value === data.streamId) activeAiStreamId.value = null;
   const msg = streamMessages.get(data.streamId);
   streamMessages.delete(data.streamId);
@@ -1103,6 +1177,7 @@ const handleAiError = (data) => {
 const handleAiCancelled = (data) => {
   if (!data || !data.streamId) return;
   aiThinking.value = false;
+  aiProgress.value = "";
   if (activeAiStreamId.value === data.streamId) activeAiStreamId.value = null;
   const msg = streamMessages.get(data.streamId);
   streamMessages.delete(data.streamId);
@@ -1117,6 +1192,96 @@ const stopAiGeneration = () => {
   ws.send({ type: "AI_STREAM_CANCEL", data: { streamId } });
   // 服务端会回 AI_STREAM_CANCELLED；这里先关闭等待态，网络延迟时按钮也不会卡住。
   aiThinking.value = false;
+  aiProgress.value = "";
+};
+
+const handleAiAgentEvent = (data) => {
+  if (!data || !data.streamId || !data.summary) return;
+  if (activeAiStreamId.value && activeAiStreamId.value !== data.streamId) return;
+  activeAiStreamId.value = data.streamId;
+  aiThinking.value = true;
+  aiProgress.value = String(data.summary).slice(0, 80);
+};
+
+const addAiConfirmation = (confirmation) => {
+  if (!confirmation?.token) return false;
+  // Older backend instances did not include botUserId in the event payload.
+  // It is safe to bind such a proposal to the currently open AI conversation:
+  // the token is still owner-scoped and all confirmation APIs revalidate it.
+  const normalized = confirmation.botUserId == null && currentFriendId.value
+    ? { ...confirmation, botUserId: Number(currentFriendId.value) }
+    : confirmation;
+  const index = pendingAiConfirmations.value.findIndex((item) => item.token === normalized.token);
+  if (index >= 0) pendingAiConfirmations.value.splice(index, 1, normalized);
+  else pendingAiConfirmations.value.push(normalized);
+  scrollToBottom();
+  return index < 0;
+};
+
+const handleAiConfirmation = (data) => {
+  let confirmation = data?.confirmation;
+  // Be tolerant of a proxy/old server returning the nested payload as JSON
+  // text instead of an object; the server token is still validated on click.
+  if (typeof confirmation === "string") confirmation = safeParseJson(confirmation);
+  if (!confirmation) return;
+  if (addAiConfirmation(confirmation)) {
+    ElMessage.warning({
+      message: "已生成待确认操作，请点击聊天中的确认按钮完成操作",
+      duration: 5000,
+    });
+  }
+};
+
+const fetchAiConfirmations = async () => {
+  try {
+    const res = await request.get("/ai/confirmations");
+    if (res.code === 200) pendingAiConfirmations.value = Array.isArray(res.data) ? res.data : [];
+  } catch (e) {
+    // 确认卡不是聊天主链路；网络瞬断时保留已实时收到的卡片。
+  }
+};
+
+const confirmationLabel = (actionType) => ({ MEMORY: "保存助手记忆", DRAFT: "保存消息草稿", WEATHER: "查询外部天气", WEB_SEARCH: "联网搜索公开网页", REMINDER: "创建站内提醒" }[actionType] || "待确认操作");
+const confirmationHint = (actionType) => {
+  if (actionType === "WEATHER") return "确认后仅发送中国城市名给和风天气，不使用设备定位或聊天内容。";
+  if (actionType === "WEB_SEARCH") return "确认后仅发送上方显示的搜索词，不会发送聊天记录、文件或账号信息。";
+  if (actionType === "REMINDER") return "确认后仅创建站内提醒，到点通过通知中心提醒你；不会发送聊天消息。";
+  return "确认前不会保存；草稿也不会自动发送。";
+};
+
+const completeAiConfirmation = async (confirmation, accepted) => {
+  if (!confirmation?.token) return;
+  try {
+    const res = await request.post(`/ai/confirmations/${encodeURIComponent(confirmation.token)}/${accepted ? "confirm" : "reject"}`);
+    if (res.code !== 200) {
+      ElMessage.error(res.message || "操作未完成");
+      await fetchAiConfirmations();
+      return;
+    }
+    pendingAiConfirmations.value = pendingAiConfirmations.value.filter((item) => item.token !== confirmation.token);
+    if (!accepted) {
+      ElMessage.info("已取消，本次内容不会保存或发送");
+      return;
+    }
+    if (res.data?.actionType === "WEATHER") {
+      ElMessage.success("天气结果已发送到当前 AI 对话");
+    } else if (res.data?.actionType === "WEB_SEARCH") {
+      ElMessage.success("联网搜索结果已发送到当前 AI 对话");
+    } else if (res.data?.actionType === "REMINDER") {
+      ElMessage.success(`提醒已创建，将在 ${res.data.scheduledAt} 通知你`);
+    } else if (res.data?.actionType === "DRAFT" && res.data.content) {
+      try {
+        await navigator.clipboard?.writeText(String(res.data.content));
+        ElMessage.success("草稿已保存并复制到剪贴板，请自行选择收件人后发送");
+      } catch (e) {
+        ElMessage.success("草稿已保存；可在后续草稿列表中查看和复制");
+      }
+    } else {
+      ElMessage.success("记忆已保存，仅供当前 AI 助手后续使用");
+    }
+  } catch (e) {
+    ElMessage.error(e?.message || "操作未完成");
+  }
 };
 
 const sortConversations = () => {
@@ -1961,13 +2126,13 @@ const handleReadReceipt = (data) => {
 
 const getNewCallId = () => {
   const c = window.crypto;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  if (c && typeof c.randomUUID === "function") return `${Date.now()}-${c.randomUUID()}`;
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
 const sendCallSignal = (toUserId, kind, payload, extra = {}) => {
-  if (!toUserId) return;
-  ws.send({
+  if (!toUserId) return false;
+  const sent = ws.send({
     type: "CALL_SIGNAL",
     data: {
       toUserId,
@@ -1977,7 +2142,9 @@ const sendCallSignal = (toUserId, kind, payload, extra = {}) => {
       payload: payload || null,
       ...extra,
     },
-  });
+  }, { queueIfDisconnected: false });
+  rtcDiagnostic("signal-sent", { kind, sent });
+  return sent;
 };
 
 // 用一个稳定的 MediaStream 对象，避免 ontrack 多次触发时丢失引用
@@ -1996,6 +2163,10 @@ const attachStreamsToElements = () => {
         if (remoteAudioRef.value.srcObject !== rs) {
           remoteAudioRef.value.srcObject = rs;
         }
+        const playPromise = remoteAudioRef.value.play?.();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch((error) => console.warn("远端音频自动播放失败:", error));
+        }
       } catch (e) {}
     }
     if (callType.value === "VIDEO") {
@@ -2003,6 +2174,10 @@ const attachStreamsToElements = () => {
         try {
           if (remoteVideoRef.value.srcObject !== rs) {
             remoteVideoRef.value.srcObject = rs;
+          }
+          const playPromise = remoteVideoRef.value.play?.();
+          if (playPromise && typeof playPromise.catch === "function") {
+            playPromise.catch((error) => console.warn("远端视频自动播放失败:", error));
           }
         } catch (e) {}
       }
@@ -2017,16 +2192,27 @@ const attachStreamsToElements = () => {
   });
 };
 
-const ensurePeerConnection = (forceRelay = false) => {
+const ensurePeerConnection = () => {
   if (peerConnection) return peerConnection;
 
-  const config = {
+  if (typeof RTCPeerConnection !== "function") {
+    const error = new Error("当前 WebView 不支持 WebRTC，请更新 Android System WebView 或使用 X5 内核");
+    error.name = "NotSupportedError";
+    throw error;
+  }
+
+const config = {
     iceServers: getIceServers(),
-    iceCandidatePoolSize: 2,
     // "all" = 先尝试直连，失败自动走 TURN 中继
     // "relay" = 强制走 TURN（WiFi 对称 NAT 场景兜底）
-    iceTransportPolicy: getIceTransportPolicy(forceRelay),
+    iceTransportPolicy: getIceTransportPolicy(),
   };
+
+  if (!config.iceServers.length) {
+    const error = new Error("缺少 TURN 配置");
+    error.name = "RtcConfigurationError";
+    throw error;
+  }
 
   peerConnection = new RTCPeerConnection(config);
 
@@ -2034,12 +2220,22 @@ const ensurePeerConnection = (forceRelay = false) => {
     if (event.candidate && callPeerUserId.value) {
       const candidateText = event.candidate.candidate || "";
       const typeMatch = candidateText.match(/ typ (host|srflx|relay)\b/);
-      console.log("ICE 候选:", {
-        type: typeMatch ? typeMatch[1] : "unknown",
+      rtcDiagnostic("local-ice-candidate", {
+        candidateType: typeMatch ? typeMatch[1] : "unknown",
         protocol: event.candidate.protocol,
         url: event.candidate.url,
       });
-      sendCallSignal(callPeerUserId.value, "ICE", { candidate: event.candidate });
+      // 某些 Android WebView 无法可靠 JSON.stringify 原生 RTCIceCandidate，
+      // 显式转成普通对象，避免服务端收到空候选。
+      const candidate = typeof event.candidate.toJSON === "function"
+        ? event.candidate.toJSON()
+        : {
+            candidate: event.candidate.candidate,
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex,
+            usernameFragment: event.candidate.usernameFragment,
+          };
+      sendCallSignal(callPeerUserId.value, "ICE", { candidate });
     }
   };
 
@@ -2051,72 +2247,41 @@ const ensurePeerConnection = (forceRelay = false) => {
     });
   };
 
-  // ICE 采集超时：超时后尝试 TURN 中继
-  peerConnection.ongatheringstatechange = () => {
-    if (peerConnection?.iceGatheringState === "gathering") {
-      clearTimeout(iceGatherTimeout);
-      iceGatherTimeout = setTimeout(() => {
-        if (peerConnection?.iceGatheringState === "gathering") {
-          console.warn("ICE 采集超时");
-          if (!forceRelay && !isRelayTransportConfigured()) {
-            console.log("尝试 TURN 中继模式重连...");
-            try {
-              peerConnection.onicecandidate = null;
-              peerConnection.ontrack = null;
-              peerConnection.oniceconnectionstatechange = null;
-              peerConnection.ongatheringstatechange = null;
-              peerConnection.close();
-            } catch (e) {}
-            peerConnection = null;
-            pendingIceCandidates = [];
-            restartWithTurnRelay();
-          }
-        }
-      }, ICE_GATHER_TIMEOUT);
-    } else if (peerConnection?.iceGatheringState === "complete") {
-      clearTimeout(iceGatherTimeout);
-    }
-  };
-
+  // ICE 会自动在 host/srflx/relay 候选间择优，无需在采集过程中销毁连接。
+  // 旧逻辑会在对方尚未接听时重建 PeerConnection，导致有效 OFFER 被提前作废。
   // 监听 ICE 连接状态，真正连通后才设置 in_call
   peerConnection.oniceconnectionstatechange = () => {
     const state = peerConnection?.iceConnectionState;
-    console.log("ICE 连接状态:", state);
+    rtcDiagnostic("ice-state", { state });
     if (state === "connected" || state === "completed") {
-      clearTimeout(iceGatherTimeout);
+      clearTimeout(callTimeout);
+      clearTimeout(disconnectTimeout);
+      disconnectTimeout = null;
       if (callStatus.value !== "in_call") {
         callStatus.value = "in_call";
         attachStreamsToElements();
       }
     } else if (state === "failed") {
-      clearTimeout(iceGatherTimeout);
-      clearTimeout(iceConnectionTimeout);
-      // ICE 失败 → 如果当前是直连模式，尝试 TURN 中继重连
-      if (
-        !forceRelay &&
-        !isRelayTransportConfigured() &&
-        (callStatus.value === "in_call" || callStatus.value === "connecting")
-      ) {
-        console.warn("直连失败，尝试 TURN 中继...");
-        ElMessage.info("正在切换中继模式...");
-        try {
-          peerConnection.onicecandidate = null;
-          peerConnection.ontrack = null;
-          peerConnection.oniceconnectionstatechange = null;
-          peerConnection.ongatheringstatechange = null;
-          peerConnection.close();
-        } catch (e) {}
-        peerConnection = null;
-        pendingIceCandidates = [];
-        // 直接触发 TURN 重连
-        restartWithTurnRelay();
-        return;
-      }
-      ElMessage.warning("通话连接失败，请检查网络后重试");
+      clearTimeout(callTimeout);
+      clearTimeout(disconnectTimeout);
+      ElMessage.warning("通话连接失败：请检查 TURN 配置或切换网络后重试");
       hangupCall();
-    } else if (state === "disconnected" || state === "closed") {
+    } else if (state === "disconnected") {
       if (callStatus.value === "in_call") {
-        ElMessage.warning("通话连接中断");
+        // Android 在 WiFi/蜂窝网络切换或短暂丢包时会进入 disconnected，
+        // 此状态可能自行恢复，不能立即销毁仍可用的 PeerConnection。
+        clearTimeout(disconnectTimeout);
+        disconnectTimeout = setTimeout(() => {
+          if (peerConnection?.iceConnectionState === "disconnected") {
+            ElMessage.warning("通话连接中断");
+            hangupCall();
+          }
+        }, 10000);
+      }
+    } else if (state === "closed") {
+      clearTimeout(disconnectTimeout);
+      if (callStatus.value === "in_call") {
+        ElMessage.warning("通话已断开");
         hangupCall();
       }
     }
@@ -2152,22 +2317,23 @@ const resetCallState = () => {
   callActionLoading.value = false;
   incomingOffer.value = null;
   pendingIceCandidates = [];
-  isCallRestart = false;
   callPeerUserId.value = null;
   callId.value = null;
   callType.value = null;
   callStatus.value = "idle";
 
-  clearTimeout(iceGatherTimeout);
-  clearTimeout(iceConnectionTimeout);
-  iceGatherTimeout = null;
-  iceConnectionTimeout = null;
+  directCall?.close();
+  directCall = null;
+
+  clearTimeout(callTimeout);
+  clearTimeout(disconnectTimeout);
+  callTimeout = null;
+  disconnectTimeout = null;
   if (peerConnection) {
     try {
       peerConnection.onicecandidate = null;
       peerConnection.ontrack = null;
       peerConnection.oniceconnectionstatechange = null;
-      peerConnection.ongatheringstatechange = null;
       peerConnection.close();
     } catch (e) {}
   }
@@ -2209,7 +2375,7 @@ const getMediaErrorMessage = (err, mode) => {
   const deviceText = isVideo ? "摄像头/麦克风" : "麦克风";
 
   if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-    return `${deviceText}权限被拒绝：请在浏览器站点设置中允许权限后重试`;
+    return `${deviceText}权限被拒绝：请在系统“应用权限”中允许 Echo Chat 使用后重试`;
   }
   if (name === "NotFoundError" || name === "DevicesNotFoundError") {
     return `未检测到可用${deviceText}设备`;
@@ -2221,10 +2387,15 @@ const getMediaErrorMessage = (err, mode) => {
     return `设备不满足当前通话要求：请更换设备或降低约束`;
   }
   if (name === "NotSupportedError") {
-    return `当前环境不支持音视频通话：请使用 Chrome/Edge/Firefox/Safari 最新版，避免微信/QQ内置浏览器；并确保用 https 或 localhost 打开`;
+    return isHtml5PlusRuntime()
+      ? `当前 WebView 未提供 WebRTC 媒体接口：请更新 Android System WebView/X5，并重新安装最新版 APK`
+      : `当前浏览器不支持音视频通话：请使用最新版 Chrome/Edge/Firefox/Safari，并确保通过 HTTPS 或 localhost 打开`;
   }
   if (name === "SecurityError") {
     return `浏览器安全限制：请使用 https 或 localhost 打开站点`;
+  }
+  if (["RtcConfigurationError", "RealtimeUnavailableError", "RtcSignalingError"].includes(name)) {
+    return err.message;
   }
   if (err && typeof err.message === "string" && err.message) {
     return `${deviceText}获取失败：${err.message}`;
@@ -2232,10 +2403,116 @@ const getMediaErrorMessage = (err, mode) => {
   return `${deviceText}获取失败`;
 };
 
+const isHtml5PlusRuntime = () =>
+  typeof window !== "undefined" && Boolean(window.plus?.android);
+
+const isHtml5PlusEnvironment = () =>
+  typeof window !== "undefined" && (
+    Boolean(window.plus) || /Html5Plus/i.test(navigator.userAgent || "")
+  );
+
+const waitForPlusReady = async () => {
+  if (!isHtml5PlusEnvironment() || window.plus) return;
+  await new Promise((resolve, reject) => {
+    let timer = null;
+    const done = () => {
+      clearTimeout(timer);
+      document.removeEventListener("plusready", done);
+      resolve();
+    };
+    document.addEventListener("plusready", done, { once: true });
+    timer = setTimeout(() => {
+      document.removeEventListener("plusready", done);
+      const error = new Error("5+ Runtime 未就绪，请完全退出 APK 后重新打开");
+      error.name = "NotSupportedError";
+      reject(error);
+    }, 5000);
+  });
+};
+
+const assertWebRtcCapability = () => {
+  const hasPeerConnection = typeof window.RTCPeerConnection === "function";
+  const hasMedia = Boolean(
+    navigator.mediaDevices?.getUserMedia || navigator.getUserMedia ||
+    navigator.webkitGetUserMedia || navigator.mozGetUserMedia
+  );
+  rtcDiagnostic("capability", { hasPeerConnection, hasMedia, html5Plus: isHtml5PlusRuntime() });
+  if (!hasPeerConnection || !hasMedia) {
+    const error = new Error("WebRTC capability is not available");
+    error.name = "NotSupportedError";
+    throw error;
+  }
+};
+
+const requestNativeMediaPermissions = async (mode) => {
+  if (!isHtml5PlusRuntime()) return;
+
+  const permissions = ["android.permission.RECORD_AUDIO"];
+  if (mode === "VIDEO") permissions.push("android.permission.CAMERA");
+
+  await new Promise((resolve, reject) => {
+    window.plus.android.requestPermissions(
+      permissions,
+      (result) => {
+        const denied = [
+          ...(Array.isArray(result?.deniedPresent) ? result.deniedPresent : []),
+          ...(Array.isArray(result?.deniedAlways) ? result.deniedAlways : []),
+        ];
+        if (denied.length > 0) {
+          rtcDiagnostic("permission", { granted: false, deniedCount: denied.length });
+          const error = new Error(`Android permissions denied: ${denied.join(", ")}`);
+          error.name = "NotAllowedError";
+          reject(error);
+          return;
+        }
+        rtcDiagnostic("permission", { granted: true, requestedCount: permissions.length });
+        resolve();
+      },
+      (cause) => {
+        const error = new Error(cause?.message || "Android permission request failed");
+        error.name = "NotAllowedError";
+        reject(error);
+      }
+    );
+  });
+  return true;
+};
+
+const handleCallSignalAck = (data) => {
+  if (!data || String(data.callId || "") !== String(callId.value || "")) return;
+  const kind = String(data.kind || "").toUpperCase();
+  const status = String(data.status || "").toUpperCase();
+  rtcDiagnostic("signal-ack", { kind, status });
+  if (status === "DELIVERED") return;
+  if (status === "OFFLINE") ElMessage.info("对方不在线");
+  else ElMessage.error("通话信令无效，请挂断后重新发起");
+  callDialogVisible.value = false;
+  resetCallState();
+};
+
 const setupLocalMedia = async (mode) => {
-  const constraints =
-    mode === "VIDEO" ? { audio: true, video: true } : { audio: true, video: false };
-  if (typeof window !== "undefined" && window.isSecureContext === false) {
+  await requestNativeMediaPermissions(mode);
+
+  const constraints = {
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+    video: mode === "VIDEO"
+      ? {
+          facingMode: "user",
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 24, max: 30 },
+        }
+      : false,
+  };
+  if (
+    typeof window !== "undefined" &&
+    window.isSecureContext === false &&
+    !isHtml5PlusRuntime()
+  ) {
     const e = new Error("Not secure context");
     e.name = "SecurityError";
     throw e;
@@ -2267,6 +2544,10 @@ const setupLocalMedia = async (mode) => {
       });
 
   localStream.value = stream;
+  rtcDiagnostic("media-ready", {
+    audioTracks: stream.getAudioTracks().length,
+    videoTracks: stream.getVideoTracks().length,
+  });
   attachStreamsToElements();
   return stream;
 };
@@ -2279,92 +2560,91 @@ const startVideoCall = async () => {
   await startOutgoingCall("VIDEO");
 };
 
-let lastOutgoingMode = null; // 保存呼叫模式，TURN 重连时复用
-let iceConnectionTimeout = null;
+const prepareCallEnvironment = async (mode) => {
+  await waitForPlusReady();
+  assertWebRtcCapability();
+  const stream = await setupLocalMedia(mode);
+  const config = await loadRtcConfig();
+  if (!config || config.turnConfigured !== true) {
+    stopStream(stream);
+    localStream.value = null;
+    const error = new Error("后端未配置私有 TURN，跨网络通话已阻止；请配置 /rtc/config 后重试");
+    error.name = "RtcConfigurationError";
+    throw error;
+  }
+  return stream;
+};
 
-// ICE 连接超时检测：如果在指定时间内没有连通，尝试 TURN 中继
-const startIceConnectionTimeout = (alreadyRelay = false) => {
-  clearTimeout(iceConnectionTimeout);
-  if (isRelayTransportConfigured()) return;
-  if (alreadyRelay) return; // 已经是中继模式，不再重试
-  iceConnectionTimeout = setTimeout(() => {
-    if (callStatus.value === "connecting" || callStatus.value === "calling") {
-      console.warn("ICE 连接超时，尝试 TURN 中继...");
-      ElMessage.info("网络连接较慢，正在切换中继模式...");
-      restartWithTurnRelay();
+// 只在双方完成 SDP 交换后计时；等待用户接听期间不能启动 ICE 超时。
+const startIceConnectionTimeout = () => {
+  clearTimeout(callTimeout);
+  callTimeout = setTimeout(() => {
+    if (callStatus.value === "connecting") {
+      console.warn("ICE 连接超时");
+      ElMessage.warning("通话连接超时：请检查 TURN 服务或切换网络后重试");
+      hangupCall();
     }
-  }, ICE_CONNECT_TIMEOUT);
+  }, 20_000);
 };
 
-// 用 TURN 中继模式重新发起通话
-const restartWithTurnRelay = () => {
-  if (isRelayTransportConfigured()) {
-    console.warn("当前已使用 TURN relay，跳过重复重连");
-    return;
-  }
-  const isCallee = Boolean(incomingOffer.value);
-  clearTimeout(iceConnectionTimeout);
-
-  // 通知对方通话重启
-  if (callPeerUserId.value) {
-    sendCallSignal(callPeerUserId.value, "RESTART", null);
-  }
-
-  if (isCallee) {
-    // 被叫方：保存 offer，重置状态，重新接受
-    const savedOffer = { ...incomingOffer.value };
-    resetCallState();
-    incomingOffer.value = savedOffer;
-    callDialogVisible.value = true;
-    callStatus.value = "connecting";
-    callPeerUserId.value = savedOffer.fromUserId;
-    callId.value = savedOffer.callId;
-    callType.value = savedOffer.callType;
-    pendingIceCandidates = [];
-    acceptIncomingCall();
-  } else {
-    // 主叫方：重新发起
-    const savedMode = lastOutgoingMode || callType.value || "VOICE";
-    const savedPeerId = callPeerUserId.value;
-    const savedCallId = callId.value;
-    resetCallState();
-    callDialogVisible.value = true;
-    callType.value = savedMode;
-    callStatus.value = "calling";
-    callPeerUserId.value = savedPeerId;
-    callId.value = savedCallId;
-    startOutgoingCall(savedMode, true);
-  }
+const createDirectCall = (stream) => {
+  directCall?.close();
+  directCall = new DirectWebRtcCall({
+    iceConfig: {
+      iceServers: dynamicIceServers.value,
+      iceTransportPolicy: dynamicIceTransportPolicy.value,
+    },
+    localStream: stream,
+    sendSignal: (kind, payload) => sendCallSignal(callPeerUserId.value, kind, payload),
+    onState: (state) => {
+      if (state === "connected") {
+        clearTimeout(callTimeout);
+        callStatus.value = "in_call";
+        attachStreamsToElements();
+      } else if (state === "failed") {
+        ElMessage.warning("通话连接失败，请检查 TURN 服务和网络后重试");
+        hangupCall();
+      }
+    },
+    onRemoteTrack: (stream, track) => {
+      if (stream) remoteStream.value = stream;
+      else if (track) getOrCreateRemoteStream().addTrack(track);
+      attachStreamsToElements();
+    },
+    onDiagnostic: rtcDiagnostic,
+  });
+  return directCall;
 };
 
-const startOutgoingCall = async (mode, forceRelay = false) => {
+const startOutgoingCall = async (mode) => {
   if (!currentFriendId.value) return;
-  if (callDialogVisible.value && !forceRelay) return;
+  if (callDialogVisible.value) return;
 
-  if (!forceRelay) {
-    callDialogVisible.value = true;
-    callType.value = mode;
-    callStatus.value = "calling";
-    callPeerUserId.value = Number(currentFriendId.value);
-    callId.value = getNewCallId();
-  }
-  lastOutgoingMode = mode;
+  callDialogVisible.value = true;
+  callType.value = mode;
+  callStatus.value = "calling";
+  callPeerUserId.value = Number(currentFriendId.value);
+  callId.value = getNewCallId();
   callActionLoading.value = true;
 
   try {
-    const pc = ensurePeerConnection(forceRelay);
-    if (!localStream.value) {
-      const stream = await setupLocalMedia(mode);
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-    } else {
-      // TURN 重连时复用已有本地流
-      localStream.value.getTracks().forEach((track) => pc.addTrack(track, localStream.value));
+    if (!ws.getInstance() || ws.getInstance().readyState !== WebSocket.OPEN) {
+      const error = new Error("实时连接不可用，请等待消息连接恢复后再拨打");
+      error.name = "RealtimeUnavailableError";
+      throw error;
     }
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    sendCallSignal(callPeerUserId.value, "OFFER", { sdp: pc.localDescription });
+    const stream = await prepareCallEnvironment(mode);
+    const call = createDirectCall(stream);
+    const offer = await call.createOffer();
+    const sent = sendCallSignal(callPeerUserId.value, "OFFER", {
+      sdp: offer,
+    });
+    if (!sent) {
+      const error = new Error("实时连接已断开，通话请求未发送");
+      error.name = "RealtimeUnavailableError";
+      throw error;
+    }
     callActionLoading.value = false;
-    startIceConnectionTimeout(forceRelay);
   } catch (e) {
     callActionLoading.value = false;
     ElMessage.error(getMediaErrorMessage(e, mode));
@@ -2380,19 +2660,31 @@ const acceptIncomingCall = async () => {
   try {
     callStatus.value = "connecting";
     const offerSdp = incomingOffer.value.payload?.sdp;
-    const pc = ensurePeerConnection();
-    const stream = await setupLocalMedia(callType.value || "VOICE");
-    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-    await pc.setRemoteDescription(offerSdp);
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    sendCallSignal(callPeerUserId.value, "ANSWER", { sdp: pc.localDescription });
+    if (!offerSdp?.type || !offerSdp?.sdp) {
+      const error = new Error("收到的 OFFER SDP 无效");
+      error.name = "RtcSignalingError";
+      throw error;
+    }
+    const stream = await prepareCallEnvironment(callType.value || "VOICE");
+    const call = createDirectCall(stream);
+    const answer = await call.acceptOffer(offerSdp);
+    const sent = sendCallSignal(callPeerUserId.value, "ANSWER", {
+      sdp: answer,
+    });
+    if (!sent) {
+      const error = new Error("实时连接已断开，应答未发送");
+      error.name = "RealtimeUnavailableError";
+      throw error;
+    }
     const candidates = pendingIceCandidates.slice();
     pendingIceCandidates = [];
-    for (const c of candidates) {
+    for (const item of candidates) {
+      if (String(item.callId || "") !== String(callId.value || "")) continue;
       try {
-        await pc.addIceCandidate(c);
-      } catch (e) {}
+        await call.handleSignal("ICE", { candidate: item?.iceCandidate || item });
+      } catch (e) {
+        rtcDiagnostic("remote-ice-error", { stage: "accept", message: e?.message || "unknown" });
+      }
     }
     incomingOffer.value = null;
     // 不在这里设置 in_call，由 oniceconnectionstatechange 在真正连通后设置
@@ -2425,20 +2717,12 @@ const handleCallSignal = async (data) => {
   if (toUserId && toUserId !== currentUserId) return;
 
   if (kind === "OFFER") {
-    // 同一个通话的重新 OFFER（TURN 中继重连场景）：重置状态后自动接受
-    const isRestartOffer = isCallRestart ||
-      (callDialogVisible.value && callStatus.value !== "idle" &&
-       incomingCallId && callId.value && String(callId.value) === String(incomingCallId));
-    if (isRestartOffer) {
-      console.log("收到 TURN 重连 OFFER，自动重新建立连接");
-      isCallRestart = false;
-      resetCallState();
-      // 继续往下走，重新建立通话
-    } else if (callDialogVisible.value && callStatus.value !== "idle") {
+    if (callDialogVisible.value && callStatus.value !== "idle") {
       if (fromUserId) {
-        callId.value = incomingCallId;
-        callType.value = incomingCallType;
-        sendCallSignal(fromUserId, "BUSY", null);
+        sendCallSignal(fromUserId, "BUSY", null, {
+          callId: incomingCallId,
+          callType: incomingCallType,
+        });
       }
       return;
     }
@@ -2462,12 +2746,13 @@ const handleCallSignal = async (data) => {
       callType: callType.value,
       payload: data.payload || {},
     };
-    pendingIceCandidates = [];
-
-    // TURN 重连场景：自动接听，不需要用户再点一次"接听"
-    if (isRestartOffer) {
-      nextTick(() => acceptIncomingCall());
-    }
+    // 部分 Android WebView 会先派发 ICE 再派发 OFFER：保留本通话候选，
+    // 同时丢弃上一次通话残留，避免候选串到新的 PeerConnection。
+    pendingIceCandidates = pendingIceCandidates.filter(
+      (item) => String(item.callId || "") === String(incomingCallId || "")
+    );
+    sendCallSignal(fromUserId, "RINGING", null);
+    rtcDiagnostic("incoming-offer", { callType: callType.value });
     return;
   }
 
@@ -2477,16 +2762,25 @@ const handleCallSignal = async (data) => {
 
   if (kind === "ANSWER") {
     try {
-      const pc = ensurePeerConnection();
       callStatus.value = "connecting";
       const answerSdp = data.payload?.sdp;
-      await pc.setRemoteDescription(answerSdp);
+      if (!answerSdp?.type || !answerSdp?.sdp) {
+        const error = new Error("收到的 ANSWER SDP 无效");
+        error.name = "RtcSignalingError";
+        throw error;
+      }
+      if (!directCall) throw new Error("通话会话已失效");
+      await directCall.handleSignal("ANSWER", { sdp: answerSdp });
+      startIceConnectionTimeout();
       const candidates = pendingIceCandidates.slice();
       pendingIceCandidates = [];
-      for (const c of candidates) {
+      for (const item of candidates) {
+        if (String(item.callId || "") !== String(callId.value || "")) continue;
         try {
-          await pc.addIceCandidate(c);
-        } catch (e) {}
+          await directCall.handleSignal("ICE", { candidate: item?.iceCandidate || item });
+        } catch (e) {
+          rtcDiagnostic("remote-ice-error", { stage: "answer", message: e?.message || "unknown" });
+        }
       }
       // 不在这里设置 in_call，由 oniceconnectionstatechange 在真正连通后设置
     } catch (e) {
@@ -2499,13 +2793,24 @@ const handleCallSignal = async (data) => {
   if (kind === "ICE") {
     const candidate = data.payload?.candidate;
     if (!candidate) return;
-    const pc = ensurePeerConnection();
-    if (pc.remoteDescription) {
+    // ICE 可能先于 OFFER 到达。此时只缓存，不能提前创建 PC；否则后续
+    // loadRtcConfig() 下发的私有 TURN 无法应用到已经创建的连接。
+    if (directCall) {
       try {
-        await pc.addIceCandidate(candidate);
-      } catch (e) {}
+        await directCall.handleSignal("ICE", { candidate });
+      } catch (e) {
+        rtcDiagnostic("remote-ice-error", { stage: "live", message: e?.message || "unknown" });
+      }
     } else {
-      pendingIceCandidates.push(candidate);
+      pendingIceCandidates.push({ callId: incomingCallId, iceCandidate: candidate });
+    }
+    return;
+  }
+
+  if (kind === "RINGING") {
+    if (!incomingOffer.value && ["calling", "remote_ringing"].includes(callStatus.value)) {
+      callStatus.value = "remote_ringing";
+      rtcDiagnostic("remote-ringing");
     }
     return;
   }
@@ -2528,30 +2833,6 @@ const handleCallSignal = async (data) => {
     ElMessage.info("对方不在线");
     callDialogVisible.value = false;
     resetCallState();
-    return;
-  }
-
-  if (kind === "RESTART") {
-    if (isRelayTransportConfigured()) {
-      console.warn("忽略旧的通话重启信号：当前已使用 TURN relay");
-      return;
-    }
-    // 对方正在用 TURN 重连，重置本方状态等待新的 OFFER/ANSWER
-    console.log("收到通话重启信号，准备自动接受新连接");
-    isCallRestart = true;
-    clearTimeout(iceConnectionTimeout);
-    if (peerConnection) {
-      try {
-        peerConnection.onicecandidate = null;
-        peerConnection.ontrack = null;
-        peerConnection.oniceconnectionstatechange = null;
-        peerConnection.ongatheringstatechange = null;
-        peerConnection.close();
-      } catch (e) {}
-    }
-    peerConnection = null;
-    pendingIceCandidates = [];
-    callStatus.value = "connecting";
     return;
   }
 
@@ -2602,6 +2883,16 @@ const openAiKnowledge = () => {
     return;
   }
   router.push({ path: "/home/ai-assistant/knowledge", query: { assistantId: assistant.id } });
+};
+
+const openAiAssistantManage = () => {
+  if (currentChatType.value !== "AI" || !currentFriendId.value) return;
+  const assistant = currentCustomAiAssistant.value;
+  if (!assistant) {
+    ElMessage.info("系统 AI 助手不支持个人工具、记忆与草稿管理");
+    return;
+  }
+  router.push({ path: "/home/ai-assistant/manage", query: { assistantId: assistant.id } });
 };
 
 const fetchFriendOptions = async () => {
@@ -2747,6 +3038,7 @@ onMounted(async () => {
   await loadBotInfo();
   await loadAiAssistants();
   await fetchConversations();
+  await fetchAiConfirmations();
   restorePendingFileMessages();
   request.get("/user/profile").then((res) => {
     if (res.code === 200) {
@@ -3134,6 +3426,14 @@ onBeforeUnmount(() => {
   color: #666;
 }
 
+.call-build-id {
+  margin-top: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -3393,6 +3693,11 @@ onBeforeUnmount(() => {
     padding: 12px;
   }
 
+  .agent-confirmation-card {
+    width: calc(100% - 4px);
+    margin-left: 2px;
+  }
+
   .chat-input {
     padding: 8px 12px max(8px, env(safe-area-inset-bottom));
   }
@@ -3596,6 +3901,56 @@ onBeforeUnmount(() => {
 .ai-stop-button {
   margin-left: 8px;
   padding: 0 4px;
+}
+.agent-confirmation-card {
+  width: min(480px, calc(100% - 12px));
+  box-sizing: border-box;
+  margin: 2px 0 18px 50px;
+  padding: 13px 14px 11px;
+  border: 1px solid #f2d59a;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fffaf0, #fffdf8);
+  box-shadow: 0 5px 16px rgba(151, 108, 28, 0.08);
+}
+.agent-confirmation-head,
+.agent-confirmation-actions {
+  display: flex;
+  align-items: center;
+}
+.agent-confirmation-head {
+  justify-content: space-between;
+  gap: 8px;
+  color: #8b6518;
+  font-size: 14px;
+}
+.agent-confirmation-card p {
+  margin: 8px 0;
+  color: #5f6370;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.agent-confirmation-preview {
+  max-height: 132px;
+  overflow: auto;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #3f4652;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.agent-confirmation-actions {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.agent-confirmation-card small {
+  display: block;
+  margin-top: 8px;
+  color: #a28d64;
+  font-size: 11px;
 }
 .ai-sources {
   display: flex;

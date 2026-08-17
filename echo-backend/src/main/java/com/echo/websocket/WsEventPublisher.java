@@ -26,15 +26,16 @@ public class WsEventPublisher {
     }
 
     /** 向某用户投递（跨实例：所有实例上该用户的存活会话都收到）。 */
-    public void publishToUser(Long userId, String frameJson) {
-        if (userId == null || frameJson == null) return;
+    public boolean publishToUser(Long userId, String frameJson) {
+        if (userId == null || frameJson == null) return false;
         try {
             Map<String, Object> payload = new HashMap<>();
             payload.put("target", userId);
             payload.put("frame", frameJson);
-            redisTemplate.convertAndSend(CHANNEL, JSON.toJSONString(payload));
+            Long receivers = redisTemplate.convertAndSend(CHANNEL, JSON.toJSONString(payload));
+            return receivers != null && receivers > 0;
         } catch (Exception e) {
-            // 降级：忽略
+            return false;
         }
     }
 

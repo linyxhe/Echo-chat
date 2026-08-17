@@ -1,7 +1,10 @@
 <template>
   <div class="admin-layout">
     <div class="sidebar">
-      <div class="logo">Echo Admin</div>
+      <div class="logo">
+        <img class="logo-image" :src="appLogo" alt="Echo Chat" />
+        <span>Echo Admin</span>
+      </div>
       <div
         class="menu-item"
         :class="{ active: route.path === '/admin/monitor' }"
@@ -37,6 +40,20 @@
       >
         <el-icon><Collection /></el-icon> 知识库
       </div>
+      <div
+        class="menu-item"
+        :class="{ active: route.path === '/admin/ai-usage' }"
+        @click="$router.push('/admin/ai-usage')"
+      >
+        <el-icon><DataAnalysis /></el-icon> AI 审计
+      </div>
+      <div
+        class="menu-item"
+        :class="{ active: route.path === '/admin/client-releases' }"
+        @click="$router.push('/admin/client-releases')"
+      >
+        <el-icon><Download /></el-icon> 客户端发布
+      </div>
 
       <div class="logout-btn" @click="handleLogout">
         <el-icon><SwitchButton /></el-icon> 退出登录
@@ -50,11 +67,12 @@
 
 <script setup>
 import { useRoute, useRouter } from "vue-router";
-import { Monitor, User, Warning, Setting, SwitchButton, Collection } from "@element-plus/icons-vue";
+import { Monitor, User, Warning, Setting, SwitchButton, Collection, DataAnalysis, Download } from "@element-plus/icons-vue";
 import { ElMessageBox } from "element-plus";
 
 const route = useRoute();
 const router = useRouter();
+const appLogo = `${import.meta.env.BASE_URL}favicon.png`;
 
 const handleLogout = () => {
   ElMessageBox.confirm("确定要退出登录吗？", "提示", {
@@ -88,13 +106,21 @@ const handleLogout = () => {
 }
 .logo {
   height: 60px;
-  line-height: 60px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
   font-size: 20px;
   font-weight: bold;
   background-color: #409eff; /* 使用 Element Plus 主色 */
   color: white;
   margin-bottom: 20px;
+}
+.logo-image {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  object-fit: contain;
 }
 .menu-item {
   padding: 15px 20px;

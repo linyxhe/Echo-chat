@@ -77,11 +77,11 @@
             placeholder="搜索文件名 / 分类"
             clearable
             style="width: 240px"
-            @change="fetchDocuments"
-            @clear="fetchDocuments"
+            @change="fetchDocuments(1)"
+            @clear="fetchDocuments(1)"
           >
             <template #append>
-              <el-button @click="fetchDocuments"><el-icon><Search /></el-icon></el-button>
+              <el-button @click="fetchDocuments(1)"><el-icon><Search /></el-icon></el-button>
             </template>
           </el-input>
         </div>
@@ -135,6 +135,17 @@
           </el-table-column>
         </el-table>
         <el-empty v-if="!loading && documents.length === 0" description="暂无文档" :image-size="80" />
+        <div v-if="total > 0" class="pagination-wrap">
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :page-sizes="[10, 20, 50]"
+            :total="total"
+            layout="total, sizes, prev, pager, next"
+            @current-change="fetchDocuments"
+            @size-change="handleSizeChange"
+          />
+        </div>
       </div>
     </el-card>
 
@@ -173,6 +184,9 @@ const uploadCategory = ref("");
 const uploadAiEnabled = ref(true);
 const categories = ref([]);
 const keyword = ref("");
+const currentPage = ref(1);
+const pageSize = ref(10);
+const total = ref(0);
 const previewVisible = ref(false);
 const previewDoc = ref(null);
 const previewContent = ref("");
@@ -202,19 +216,27 @@ const stopPolling = () => {
   }
 };
 
-const fetchDocuments = async () => {
+const fetchDocuments = async (page = currentPage.value) => {
+  // 查询条件或分页变化时终止旧页的轮询，避免旧请求覆盖当前页。
+  stopPolling();
+  currentPage.value = Number(page) || 1;
   loading.value = true;
   try {
-    const params = keyword.value ? { keyword: keyword.value } : undefined;
+    const params = { page: currentPage.value, size: pageSize.value };
+    if (keyword.value) params.keyword = keyword.value;
     const res = await request.get("/admin/kb/documents", { params });
     if (res.code === 200) {
-      documents.value = res.data || [];
+      documents.value = res.data?.records || [];
+      total.value = Number(res.data?.total || 0);
       // 有索引中的文档则轮询到终态
       if (anyIndexing() && !pollTimer) {
         pollTimer = setInterval(async () => {
           try {
             const r = await request.get("/admin/kb/documents", { params });
-            if (r.code === 200) documents.value = r.data || [];
+            if (r.code === 200) {
+              documents.value = r.data?.records || [];
+              total.value = Number(r.data?.total || 0);
+            }
           } catch (e) {}
           if (!anyIndexing()) stopPolling();
         }, 2000);
@@ -226,6 +248,12 @@ const fetchDocuments = async () => {
   finally {
     loading.value = false;
   }
+};
+
+const handleSizeChange = (size) => {
+  pageSize.value = size;
+  currentPage.value = 1;
+  fetchDocuments(1);
 };
 
 const handleUpload = async ({ file }) => {
@@ -400,6 +428,11 @@ onBeforeUnmount(() => {
 }
 .table-scroll :deep(.el-table) {
   min-width: 760px;
+}
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 16px;
 }
 .category-text {
   margin-right: 6px;

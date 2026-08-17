@@ -54,7 +54,9 @@ export class WebSocketService {
 
     // 2. 运行时配置文件（生产部署后可单独修改 public/config.js）。
     if (runtime && (runtime.WS_HOST || runtime.API_BASE)) {
-      const protocol = runtime.WS_PROTOCOL || envProtocol || "ws";
+      const production = runtime.ENVIRONMENT === "production" || String(runtime.API_BASE || "").startsWith("https://");
+      let protocol = runtime.WS_PROTOCOL || envProtocol || (production ? "wss" : "ws");
+      if (production && protocol === "ws") protocol = "wss";
       const host = runtime.WS_HOST || String(runtime.API_BASE).replace(/^https?:\/\//, "");
       return `${protocol}://${host}${endpointWithToken}`;
     }
@@ -143,11 +145,19 @@ export class WebSocketService {
     };
   }
 
-  send(data) {
+  send(data, options = {}) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.sendRaw(data);
       return true;
     } else {
+      // RTC OFFER / ANSWER / ICE are only valid for the current live socket.
+      // Never replay them after reconnecting because the peer state and callId
+      // may already have been replaced.
+      if (options.queueIfDisconnected === false) {
+        this.connect();
+        console.warn("WebSocket is not connected; realtime frame was not queued");
+        return false;
+      }
       if (this.pendingMessages.length < 100) {
         this.pendingMessages.push(data);
       }

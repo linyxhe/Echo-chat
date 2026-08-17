@@ -39,6 +39,9 @@ public class Message {
     private Boolean deletedByReceiver;
 
     private LocalDateTime createdAt;
+
+    /** AI 回复实际采用的知识库来源摘要（JSON，不保存文档正文）。 */
+    private String aiSources;
     
     // Getters and setters
     public Long getId() {
@@ -152,6 +155,10 @@ public class Message {
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
     }
+
+    public String getAiSources() { return aiSources; }
+
+    public void setAiSources(String aiSources) { this.aiSources = aiSources; }
     
     @Override
     public String toString() {

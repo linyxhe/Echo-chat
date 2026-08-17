@@ -61,6 +61,11 @@ const router = createRouter({
           component: () => import("../views/AiAssistantKnowledgeView.vue"),
         },
         {
+          path: "ai-assistant/manage",
+          name: "ai-assistant-manage",
+          component: () => import("../views/AiAssistantManageView.vue"),
+        },
+        {
           path: "friends",
           name: "friends",
           component: () => import("../views/FriendView.vue"),
@@ -112,6 +117,16 @@ const router = createRouter({
           path: "kb",
           name: "admin-kb",
           component: () => import("../views/admin/KnowledgeBaseView.vue"),
+        },
+        {
+          path: "ai-usage",
+          name: "admin-ai-usage",
+          component: () => import("../views/admin/AiUsageView.vue"),
+        },
+        {
+          path: "client-releases",
+          name: "admin-client-releases",
+          component: () => import("../views/admin/ClientReleaseView.vue"),
         },
       ],
     },

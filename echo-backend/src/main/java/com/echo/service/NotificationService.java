@@ -11,6 +11,8 @@ import com.echo.websocket.WsEventPublisher;
 import com.echo.websocket.pojo.ResultMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -23,6 +25,8 @@ import java.util.Map;
 @Service
 public class NotificationService {
 
+    private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
+
     @Autowired
     private NotificationMapper notificationMapper;
 
@@ -33,8 +37,8 @@ public class NotificationService {
     private WsEventPublisher wsEventPublisher;
 
     /** 发一条通知给某用户（插行 + WS 推送 NOTIFICATION 帧）。 */
-    public void notify(Long userId, String type, String title, String content, Long relatedId) {
-        if (userId == null) return;
+    public boolean notify(Long userId, String type, String title, String content, Long relatedId) {
+        if (userId == null) return false;
         Notification n = new Notification();
         n.setUserId(userId);
         n.setType(type);
@@ -46,7 +50,10 @@ public class NotificationService {
         try {
             notificationMapper.insert(n);
         } catch (Exception e) {
-            return;
+            // Do not silently lose a reminder. The scheduler can retry it and
+            // the log makes a missing migration/database issue diagnosable.
+            log.error("Failed to persist notification: userId={}, type={}", userId, type, e);
+            return false;
         }
 
         ResultMessage rm = new ResultMessage();
@@ -63,6 +70,7 @@ public class NotificationService {
         if (wsEventPublisher != null) {
             wsEventPublisher.publishToUser(userId, JSON.toJSONString(rm));
         }
+        return true;
     }
 
     /** 通知全部真实用户（跳过 BOT）。 */

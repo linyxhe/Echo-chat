@@ -1,0 +1,13 @@
+# Test-only placeholder. Production still requires JWT_SECRET from its environment.
+jwt:
+  secret: echo-chat-test-only-jwt-secret-do-not-use-in-production
+
+# The integration tests mock the persistence calls they exercise.  Do not run
+# production MySQL migrations or require a developer's local database merely
+# to bootstrap the Spring context.
+spring:
+  flyway:
+    enabled: false
+  datasource:
+    hikari:
+      initialization-fail-timeout: -1

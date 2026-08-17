@@ -11,6 +11,15 @@ const getRuntimeConfig = () => {
   return null;
 };
 
+const normalizeApiOrigin = (value, runtime = getRuntimeConfig()) => {
+  if (!value) return "";
+  const raw = String(value).replace(/\/+$/, "");
+  const production = runtime?.ENVIRONMENT === "production";
+  if (!production || !raw.startsWith("http://")) return raw;
+  // Production pages/APK must never issue mixed-content HTTP API requests.
+  return `https://${raw.slice("http://".length)}`;
+};
+
 export const getApiOrigin = () => {
   // 0. 开发环境始终走 Vite 代理（相对 /api）：本机与局域网设备（手机连热点）都指向本地后端，
   //    避免 VITE_API_BASE / __APP_CONFIG__.API_BASE 把请求发到 localhost 或生产地址。
@@ -18,12 +27,12 @@ export const getApiOrigin = () => {
 
   // 1. 构建期环境变量
   const envBase = import.meta.env.VITE_API_BASE;
-  if (envBase) return String(envBase).replace(/\/+$/, "");
+  if (envBase) return normalizeApiOrigin(envBase);
 
   // 2. 运行时配置文件（部署到云服务器后修改 public/config.js 即可生效）
   const runtime = getRuntimeConfig();
   if (runtime && runtime.API_BASE) {
-    return String(runtime.API_BASE).replace(/\/+$/, "");
+    return normalizeApiOrigin(runtime.API_BASE, runtime);
   }
 
   if (
@@ -34,7 +43,7 @@ export const getApiOrigin = () => {
     return config.target;
   }
 
-  if (import.meta.env.PROD) return config.target;
+  if (import.meta.env.PROD) return normalizeApiOrigin(config.target);
   return "";
 };
 
@@ -49,7 +58,6 @@ export const resolveUploadUrl = (value) => {
   }
 
   // 2. 生产内网地址（10.227.100.50:8088）原样返回
-  if (url.startsWith("http://10.227.100.50:8088/files/")) return url;
 
   // 3. 其余绝对地址若指向受控下载路径 /files/，替换 Host 为当前 API 地址（保留 query，如 access token）
   try {

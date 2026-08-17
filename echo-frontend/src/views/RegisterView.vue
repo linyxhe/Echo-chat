@@ -1,6 +1,9 @@
 <template>
   <div class="register-container">
     <el-card class="register-card">
+      <div class="brand-header">
+        <img class="brand-logo" :src="appLogo" alt="Echo Chat" />
+      </div>
       <h2>Echo 聊天注册</h2>
       <el-form
         :model="registerForm"
@@ -71,6 +74,7 @@ import request from "@/util/request";
 import { useMobileViewport } from "@/composables/useMobileViewport";
 
 const router = useRouter();
+const appLogo = `${import.meta.env.BASE_URL}favicon.png`;
 const registerFormRef = ref(null);
 const loading = ref(false);
 const captchaDisabled = ref(false);
@@ -189,6 +193,17 @@ const handleRegister = async () => {
   width: 100%;
   max-width: 500px;
   background: rgba(255, 255, 255, 0.9);
+}
+.brand-header {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+.brand-logo {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  border-radius: 18px;
 }
 h2 {
   text-align: center;

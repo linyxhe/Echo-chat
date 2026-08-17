@@ -12,6 +12,30 @@ app:
     persona: ${AI_PERSONA:你是 Echo Chat Room 的 AI 助手，请用简体中文友好地回答，语气自然、简洁。}
     # 多轮记忆上下文窗口：把用户与 bot 最近 N 条文字消息作为上下文（≈ N/2 轮对话）
     context-window-messages: ${AI_CONTEXT_WINDOW_MESSAGES:20}
+    # 受控单 Agent：仅注册无副作用的只读工具；工具参数、权限范围与审计均由服务端处理。
+    agent:
+      enabled: ${AI_AGENT_ENABLED:true}
+      max-steps: ${AI_AGENT_MAX_STEPS:3}
+      max-tool-calls: ${AI_AGENT_MAX_TOOL_CALLS:4}
+      planning-timeout-ms: ${AI_AGENT_PLANNING_TIMEOUT_MS:45000}
+      # 站内提醒扫描。5 秒一轮，配合前端实时推送与 10 秒兜底轮询，
+      # 到点通常在一个很短的窗口内显式弹出。
+      reminder-sweep-interval-ms: ${AI_AGENT_REMINDER_SWEEP_INTERVAL_MS:5000}
+      reminder-sweep-initial-delay-ms: ${AI_AGENT_REMINDER_SWEEP_INITIAL_DELAY_MS:5000}
+      # 联网搜索仅使用服务端环境变量中的密钥，绝不下发给浏览器或模型。
+      # Tavily Search API: https://api.tavily.com/search
+      search:
+        provider: ${AI_WEB_SEARCH_PROVIDER:tavily}
+        api-key: ${AI_WEB_SEARCH_API_KEY:}
+        max-results: ${AI_WEB_SEARCH_MAX_RESULTS:5}
+      weather:
+        # 和风天气的 API Host 与 API Key / Bearer Token 仅由部署环境持有，绝不返回浏览器。
+        # 必填：从和风天气项目控制台复制专属 API Host（例如 https://xxxx.qweatherapi.com）。
+        # 不使用已不适用于新项目的公共默认地址，以免把 403 误报成服务故障。
+        api-host: ${QWEATHER_API_HOST:}
+        # 免费订阅可直接使用 API Key；优先于 api-token。二者均未配置时天气工具会明确拒绝请求。
+        api-key: ${QWEATHER_API_KEY:}
+        api-token: ${QWEATHER_API_TOKEN:}
     # 知识库 RAG（本地中文嵌入 bge-small-zh-v1.5）
     kb:
       enabled: ${AI_KB_ENABLED:true}
@@ -32,7 +56,9 @@ app:
     sweep-interval-ms: ${APP_PRESENCE_SWEEP_INTERVAL_MS:60000}
   file:
     # 大文件由 tusd 直接写入临时目录，Spring Boot 只保存元数据与完成确认。
-    tus-endpoint: ${TUSD_PUBLIC_ENDPOINT:http://localhost:1080/files/}
+    # Production uses a same-origin public path. This deliberately avoids a protocol-bearing
+    # fallback, so an HTTPS page can never be instructed to upload to HTTP by a missing env var.
+    tus-endpoint: ${TUSD_PUBLIC_ENDPOINT:/echo-files/}
     # The frontend tusd launcher writes under the project-root upload directory.
     # IDEA's Spring Boot run config has no explicit working directory, so it defaults
     # to the module root (project root). These relative paths resolve from there.
@@ -42,6 +68,21 @@ app:
     intent-ttl-minutes: ${APP_FILE_INTENT_TTL_MINUTES:60}
     cleanup-interval-ms: ${APP_FILE_CLEANUP_INTERVAL_MS:3600000}
     cleanup-initial-delay-ms: ${APP_FILE_CLEANUP_INITIAL_DELAY_MS:300000}
+  client-release:
+    # 管理员上传的 Windows / Android 安装包，独立于聊天附件存储，只有已发布版本可被匿名下载。
+    storage-dir: ${APP_CLIENT_RELEASE_STORAGE_DIR:upload/client-releases}
+    max-size: ${APP_CLIENT_RELEASE_MAX_SIZE:1073741824}
+  rtc:
+    # 逗号分隔。生产建议同时提供 UDP、TCP 3478 和 TLS/TCP 5349。
+    # 示例：turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp
+    turn-urls: ${RTC_TURN_URLS:}
+    # 推荐 coturn --use-auth-secret + --static-auth-secret，后端会生成短期凭据。
+    turn-shared-secret: ${RTC_TURN_SHARED_SECRET:}
+    credential-ttl-seconds: ${RTC_TURN_CREDENTIAL_TTL_SECONDS:3600}
+    # 兼容静态长期账号；配置 shared-secret 时下面两项会被忽略。
+    turn-username: ${RTC_TURN_USERNAME:}
+    turn-credential: ${RTC_TURN_CREDENTIAL:}
+    ice-transport-policy: ${RTC_ICE_TRANSPORT_POLICY:all}
 
 # AI Gateway（DeepSeek，OpenAI 兼容接口）。流式模型 bean 仅在 api-key 非空时由 starter 自动配置；
 # AiChatServiceImpl 也会以解析后的 key 为准做兜底，无 key 时优雅降级。
@@ -79,8 +120,9 @@ spring:
     multipart:
       enabled: true
       file-size-threshold: 2KB
-      max-file-size: 10MB
-      max-request-size: 10MB
+      # 管理员发布安装包会经过 Spring；聊天大文件仍由 tusd 断点续传。
+      max-file-size: ${APP_MULTIPART_MAX_FILE_SIZE:1024MB}
+      max-request-size: ${APP_MULTIPART_MAX_REQUEST_SIZE:1024MB}
 
   flyway:
     enabled: true

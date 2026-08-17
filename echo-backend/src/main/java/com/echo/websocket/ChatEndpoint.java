@@ -50,6 +50,11 @@ public class ChatEndpoint {
     // 每个 session 最近一次心跳时间：用于定时清扫淘汰断线但 onClose 未触发的死会话。
     private static final Map<Session, Long> lastHeartbeatAt = new ConcurrentHashMap<>();
 
+    private static final Set<String> CALL_SIGNAL_KINDS = Set.of(
+            "OFFER", "ANSWER", "ICE", "RINGING", "DECLINE", "BUSY", "END"
+    );
+    private static final long CALL_ID_MAX_AGE_MILLIS = 5 * 60 * 1000L;
+
     private static MessageMapper messageMapper;
     private static JwtUtil jwtUtil;
     private static com.echo.mapper.UserMapper userMapper;
@@ -336,19 +341,38 @@ public class ChatEndpoint {
 
         Object toUserIdObj = rawData.get("toUserId");
         Object kindObj = rawData.get("kind");
-        if (toUserIdObj == null || kindObj == null) return;
+        String kind = kindObj == null ? "" : String.valueOf(kindObj).trim().toUpperCase();
+        String signalCallId = rawData.get("callId") == null ? "" : String.valueOf(rawData.get("callId")).trim();
+        boolean requiresAck = "OFFER".equals(kind) || "ANSWER".equals(kind);
+        if (toUserIdObj == null || kind.isEmpty()) {
+            if (requiresAck) sendCallSignalAck(session, signalCallId, kind, "INVALID");
+            return;
+        }
 
         Long toUserId;
         try {
             toUserId = Long.valueOf(String.valueOf(toUserIdObj));
         } catch (Exception e) {
+            if (requiresAck) sendCallSignalAck(session, signalCallId, kind, "INVALID");
             return;
         }
 
-        String kind = String.valueOf(kindObj);
         Object callIdObj = rawData.get("callId");
         Object callTypeObj = rawData.get("callType");
         Object payloadObj = rawData.get("payload");
+
+        boolean invalid = this.userId == null
+                || toUserId <= 0
+                || toUserId.equals(this.userId)
+                || !CALL_SIGNAL_KINDS.contains(kind)
+                || signalCallId.isEmpty()
+                || signalCallId.length() > 128
+                || isExpiredCallId(signalCallId)
+                || (requiresAck && !isValidSdpPayload(kind, payloadObj));
+        if (invalid) {
+            if (requiresAck) sendCallSignalAck(session, signalCallId, kind, "INVALID");
+            return;
+        }
 
         System.out.println("CALL_SIGNAL from=" + this.userId + " to=" + toUserId + " kind=" + kind);
 
@@ -369,23 +393,64 @@ public class ChatEndpoint {
                 ? presenceService.isOnline(toUserId)
                 : onlineUsers.containsKey(toUserId);
         if (targetOnline) {
+            boolean delivered;
             if (wsEventPublisher != null) {
-                wsEventPublisher.publishToUser(toUserId, JSON.toJSONString(forward));
+                delivered = wsEventPublisher.publishToUser(toUserId, JSON.toJSONString(forward));
+                if (!delivered) delivered = deliverToUser(toUserId, JSON.toJSONString(forward));
             } else {
-                deliverToUser(toUserId, JSON.toJSONString(forward));
+                delivered = deliverToUser(toUserId, JSON.toJSONString(forward));
             }
+            if (requiresAck) sendCallSignalAck(session, signalCallId, kind, delivered ? "DELIVERED" : "OFFLINE");
+            if (!delivered) sendCallOffline(session, toUserId, callIdObj, callTypeObj);
         } else {
-            ResultMessage offline = new ResultMessage();
-            offline.setType("CALL_SIGNAL");
-            Map<String, Object> offlineData = new HashMap<>();
-            offlineData.put("fromUserId", toUserId);
-            offlineData.put("toUserId", this.userId);
-            offlineData.put("kind", "OFFLINE");
-            if (callIdObj != null) offlineData.put("callId", callIdObj);
-            if (callTypeObj != null) offlineData.put("callType", callTypeObj);
-            offline.setData(offlineData);
-            sendText(session, JSON.toJSONString(offline));
+            if (requiresAck) sendCallSignalAck(session, signalCallId, kind, "OFFLINE");
+            sendCallOffline(session, toUserId, callIdObj, callTypeObj);
         }
+    }
+
+    private void sendCallOffline(Session session, Long toUserId, Object callIdObj, Object callTypeObj) {
+        ResultMessage offline = new ResultMessage();
+        offline.setType("CALL_SIGNAL");
+        Map<String, Object> offlineData = new HashMap<>();
+        offlineData.put("fromUserId", toUserId);
+        offlineData.put("toUserId", this.userId);
+        offlineData.put("kind", "OFFLINE");
+        if (callIdObj != null) offlineData.put("callId", callIdObj);
+        if (callTypeObj != null) offlineData.put("callType", callTypeObj);
+        offline.setData(offlineData);
+        sendText(session, JSON.toJSONString(offline));
+    }
+
+    private static boolean isValidSdpPayload(String kind, Object payloadObj) {
+        if (!(payloadObj instanceof Map<?, ?> payload)) return false;
+        Object sdpObj = payload.get("sdp");
+        if (!(sdpObj instanceof Map<?, ?> sdp)) return false;
+        String type = sdp.get("type") == null ? "" : String.valueOf(sdp.get("type"));
+        String value = sdp.get("sdp") == null ? "" : String.valueOf(sdp.get("sdp"));
+        return kind.toLowerCase().equals(type.toLowerCase()) && StringUtils.hasText(value);
+    }
+
+    private static boolean isExpiredCallId(String value) {
+        int separator = value.indexOf('-');
+        if (separator < 10) return false; // Backward-compatible UUID from older clients.
+        try {
+            long createdAt = Long.parseLong(value.substring(0, separator));
+            long age = System.currentTimeMillis() - createdAt;
+            return age > CALL_ID_MAX_AGE_MILLIS || age < -60_000L;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
+    }
+
+    private static void sendCallSignalAck(Session session, String callId, String kind, String status) {
+        ResultMessage ack = new ResultMessage();
+        ack.setType("CALL_SIGNAL_ACK");
+        Map<String, Object> data = new HashMap<>();
+        data.put("callId", callId == null ? "" : callId);
+        data.put("kind", kind == null ? "" : kind);
+        data.put("status", status);
+        ack.setData(data);
+        sendText(session, JSON.toJSONString(ack));
     }
     
     /**

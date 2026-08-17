@@ -23,7 +23,7 @@ Echo 是一个基于 **Vue 3 + Element Plus** 的社交聊天应用，同时打�
 | HTTP | Axios（`src/util/request.js`） |
 | 实时通信 | WebSocket（`src/util/webSocket.js`，自实现重连） |
 | 音视频 | WebRTC（`RTCPeerConnection` + STUN，点对点） |
-| 桌面端 | Electron 33 + electron-builder（NSIS / portable） |
+| 桌面端 | Electron 33 + electron-builder（NSIS 安装包、portable 免安装包、win-unpacked 调试目录） |
 
 ---
 
@@ -259,7 +259,7 @@ echo-frontend/
 
 ## 八、Electron 桌面端
 
-- `package.json` 中 `main: electron/main.cjs`，`build` 配置 `appId: com.echo.chatroom`，`productName: EchoChat`，产物为 `release/`（NSIS 安装包 + portable）。
+- `package.json` 中 `main: electron/main.cjs`，`build` 配置 `appId: com.echo.chatroom`，`productName: EchoChat`，桌面端发布安装包、免安装包和解包目录。
 - `preload.cjs` 通过 `contextBridge` 暴露 `window.ECHO_DESKTOP.isElectron = true`（用于区分桌面环境，当前前端未大量使用）。
 - 渲染进程 `sandbox:false`、`contextIsolation:true`、`nodeIntegration:false`。
 - 外部链接（`shell.openExternal`）在独立浏览器打开，Electron 内拒绝。
@@ -269,7 +269,8 @@ echo-frontend/
 npm install
 npm run dev              # 开发（Vite，端口 8089，自动打开浏览器）
 npm run build            # 仅构建前端到 dist/
-npm run electron:build   # 构建前端 + 打包 Windows 桌面程序
+powershell -ExecutionPolicy Bypass -File ..\scripts\build-release.ps1 -SkipBackend -SkipMobile
+# 只生成一个 NSIS 安装包及 SHA-256 校验文件
 ```
 
 > 打包后的桌面程序通过 `config.target`（或 `VITE_API_BASE` / `VITE_WS_*`）连接后端；若后端地址变化，需修改 `config.js` 或注入对应环境变量后重新打包。

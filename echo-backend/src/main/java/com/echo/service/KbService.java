@@ -2,6 +2,8 @@ package com.echo.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.echo.mapper.KbChunkMapper;
 import com.echo.mapper.KbDocumentMapper;
 import com.echo.pojo.KbChunk;
@@ -168,6 +170,21 @@ public class KbService {
             d.setContent(null);
         }
         return list;
+    }
+
+    /** Admin document list with database-side pagination; content is never returned in rows. */
+    public IPage<KbDocument> listDocumentsPage(String keyword, int page, int size) {
+        QueryWrapper<KbDocument> qw = new QueryWrapper<>();
+        if (StringUtils.hasText(keyword)) {
+            qw.and(w -> w.like("filename", keyword).or().like("category", keyword));
+        }
+        qw.orderByDesc("created_at");
+        IPage<KbDocument> result = documentMapper.selectPage(new Page<>(Math.max(1, page), Math.max(1, Math.min(size, 100))), qw);
+        List<KbDocument> list = result.getRecords();
+        for (KbDocument d : list) {
+            d.setContent(null);
+        }
+        return result;
     }
 
     /** 完整文档（含 content，供预览）。 */
@@ -387,6 +404,32 @@ public class KbService {
     /** 检索公共文档 + 当前助手私有文档；私有文档不受公共分类选择限制。 */
     public List<SearchHit> searchHits(String query, Collection<String> categories,
                                       Long ownerId, Long assistantId, int topK, double minScore) {
+        if (!enabled || !StringUtils.hasText(query) || topK <= 0) return List.of();
+
+        // 私有资料是用户为当前助手专门提供的上下文，不能与公共库混排后再截断，
+        // 否则在线上公共库较大时会被全局 Top-K 挤掉。本次会话先保留私有命中，
+        // 剩余名额再由公共资料补足；两侧仍各自按相关度排序并应用相同阈值。
+        boolean hasPrivateScope = ownerId != null && assistantId != null;
+        List<SearchHit> privateHits = hasPrivateScope
+                ? searchScopedHits(query, null, ownerId, assistantId, topK, minScore, true)
+                : List.of();
+        int publicLimit = Math.max(topK - privateHits.size(), 0);
+        List<SearchHit> publicHits = publicLimit > 0
+                ? searchScopedHits(query, categories, null, null, publicLimit, minScore, false)
+                : List.of();
+
+        if (privateHits.isEmpty()) return publicHits;
+        if (publicHits.isEmpty()) return privateHits;
+        List<SearchHit> merged = new ArrayList<>(privateHits.size() + publicHits.size());
+        merged.addAll(privateHits);
+        merged.addAll(publicHits);
+        return merged;
+    }
+
+    /** 在单一作用域内检索，避免私有资料与公共资料相互挤占名额。 */
+    private List<SearchHit> searchScopedHits(String query, Collection<String> categories,
+                                              Long ownerId, Long assistantId, int topK, double minScore,
+                                              boolean privateOnly) {
         if (!enabled || !StringUtils.hasText(query)) return List.of();
         try {
             List<ChunkVec> vecs = vectors();
@@ -404,7 +447,7 @@ public class KbService {
                 boolean privateDocument = ownerId != null && assistantId != null
                         && ownerId.equals(v.ownerId()) && assistantId.equals(v.assistantId());
                 boolean publicDocument = v.ownerId() == null && v.assistantId() == null;
-                if (!publicDocument && !privateDocument) continue;
+                if (privateOnly ? !privateDocument : !publicDocument) continue;
                 if (publicDocument && !normalizedCategories.isEmpty()
                         && !normalizedCategories.contains(String.valueOf(v.category()).trim().toLowerCase(Locale.ROOT))) {
                     continue;

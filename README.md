@@ -1,220 +1,226 @@
-# Echo Chat Room · 回声聊天室
+# Echo Chat · 回声聊天室
 
-一个功能完整的即时通讯 + 社交 + AI 助手的 Web 应用，包含 **Spring Boot 后端**、**Vue 3 前端** 与 **Electron 桌面客户端**（Windows）。支持实时单聊/群聊、大文件断点续传、WebRTC 音视频通话、朋友圈动态、DeepSeek AI 助手（含本地知识库 RAG）、全文搜索、内容审核与管理员后台。
+Echo Chat 是一个面向 Web、Windows 桌面端和 Android 的实时社交聊天应用。项目以 Spring Boot 为服务端、Vue 3 为统一前端，提供即时通信、群聊、受控文件传输、音视频通话、AI 助手与知识库，并包含运营管理后台和发布链路。
 
-> 本 README 反映仓库当前代码状态。前端实现细节见 [`PROJECT.md`](./PROJECT.md)，后端本地开发/安全边界见 [`echo-backend/LOCAL_DEVELOPMENT.md`](./echo-backend/LOCAL_DEVELOPMENT.md)。完整接口契约请以 `echo-backend` 中各 Controller 为准。
+> 本文档以当前代码为准，数据库结构由 Flyway 迁移 `V1`～`V28` 管理。接口字段与实时消息事件请以 Controller、`ChatEndpoint` 和前端实现为准。
 
----
+## 功能概览
 
-## 一、功能特性
+### 实时聊天与社交
 
-### 💬 消息
-- **实时单聊**：WebSocket 推送、已读回执（含已读时间）、“正在输入”、发送中/已读状态、心跳与断线重连。
-- **消息可靠性**：`client_message_id` 幂等去重（Flyway 唯一索引）、Redis 在线状态账本、多标签页会话路由、跨节点实时推送（Redis Pub/Sub）、隐私开关（在线状态/已读回执默认隐藏）。
-- **群聊**：建群、邀请/入群、群成员管理、群消息实时广播、未读游标、群文件/图片、联系人备注、会话置顶/归档。
-- **会话管理**：会话列表（好友 + AI + 群）、置顶、隐藏/恢复、清空聊天记录（软删）。
+- 单聊与群聊：文本、图片、文件、输入状态、消息已读时间、离线未读、会话置顶、归档、清空记录和联系人备注。
+- 可靠投递：客户端消息 ID 幂等、发送确认、断线重连、心跳看门狗；Redis 维护在线状态并通过 Pub/Sub 支持跨实例推送。
+- 好友与群组：用户搜索、好友申请、群创建、邀请、审核入群、成员与群设置管理。
+- 社交互动：朋友圈图文动态、可见范围、点赞、评论、举报、敏感词过滤和系统通知中心。
+- 全文搜索：按当前用户权限范围搜索用户、私聊与群聊文本。
 
-### 📁 文件传输
-- **小文件（≤10MB）**：HTTP `multipart` 上传，受控下载 URL（`/files/{id}/content?access=...`）。
-- **大文件（>10MB）**：`tusd` 分片上传 + 断点续传，上传进度、处理中状态、`READY` 后自动发送消息、刷新/断网恢复（`localStorage` 任务持久化）。
-- 所有文件经 **SHA-256 完整性校验** 后进入受控下载，不公开静态托管；`message`/`file_asset` 元数据落库。
+### 文件与音视频
 
-### 🤖 AI 助手
-- **DeepSeek 流式对话**（langchain4j + OpenAI 兼容接口）：WS 流式推送 token、Markdown 渲染（`marked` + `dompurify`）、多轮记忆（DB 上下文窗口）、清空会话即失忆、管理端开关。
-- **自定义 AI 助手**：用户可创建/编辑/删除私有助手，备注、停止生成。
-- **知识库 RAG**：本地中文嵌入模型 `bge-small-zh-v1.5`（无 API key）、MySQL 持久化向量 + 余弦检索、`txt/md/pdf/docx` 解析、异步索引与断点恢复、知识库分类与文档管理（管理端）。
+- 小文件使用 HTTP 上传；大文件通过 `tusd` + Uppy 实现分片上传、断点恢复、进度展示和刷新后续传。
+- 后端签发上传意图并校验 tusd Hook；文件仅在大小与 SHA-256 校验通过后变为 `READY`，随后存放到非公开目录并由受控下载接口提供访问。
+- WebRTC 一对一音频/视频通话，信令走 WebSocket；TURN 配置仅由已登录用户从后端获取，支持 coturn shared-secret 短期凭据或静态凭据。
 
-### 👥 社交
-- **好友**：搜索、请求/同意/拒绝、备注、删除、在线状态。
-- **朋友圈动态**：图文发布、可见范围、点赞/评论、删除、举报、敏感词过滤。
-- **通知**：系统通知、好友请求、管理员全体广播（顶部铃铛 + 未读角标 + WS 实时推送）。
-- **全文搜索**：用户 / 单聊消息 / 群消息（防抖下拉联想）。
+### AI 助手与知识库
 
-### 🎮 其他
-- **音视频通话**：WebRTC 点对点（音频/视频），信令经 WebSocket，STUN/TURN 支持。
-- **内容审核**：举报提交/处理流程、敏感词库（`system_config` 可配置）。
-- **管理员后台**：用户管理（封禁/重置密码）、举报审核、系统监控（在线/数据统计）、系统配置（AI 开关、敏感词）、知识库管理。
-- **桌面端**：Electron 打包（NSIS + portable），`config.js` / 环境变量切换后端地址。
-- **移动端适配**：≤768px 断点，侧边栏变底部 Tab，聊天双栏变单栏。
+- 基于 LangChain4j 和 OpenAI 兼容接口接入 DeepSeek 流式对话，支持多轮上下文、停止生成、Markdown 安全渲染、自定义私有助手与用量审计。
+- 本地 RAG：使用 `bge-small-zh-v1.5` 中文嵌入模型，支持 `txt`、`md`、`pdf`、`docx` 文档解析、异步索引、分类检索以及私有资料优先召回。
+- 受控 Agent：模型只能申请白名单工具；服务端负责权限、参数校验、调用预算、超时、审计和结果脱敏。支持当前时间、知识库检索、计算器、聊天记录检索、文件目录检索、联网搜索和实时天气。
+- 每个自建助手独立授权工具。记忆保存、草稿生成和站内提醒属于确认型操作，必须由用户点击确认后才会落库；提醒到点后通过通知中心与 WebSocket 推送。
+- 联网搜索与天气调用均由服务端持有密钥，并有后台可配置的启停开关、周期额度与保护阈值。
 
----
+### 管理与多端发布
 
-## 二、技术栈
+- 管理后台提供用户封禁/重置、举报审核、系统配置、系统统计、知识库文档管理、AI 用量审计和客户端安装包发布管理。
+- Windows：Electron 生成 NSIS 安装包、便携版和校验文件；每次发布使用独立目录，避免运行中的旧客户端锁定构建产物。
+- Android：将前端产物同步到 HBuilderX 工程，开发包使用局域网 HTTP/WS，生产包强制 HTTPS/WSS，并提供 APK 内容校验脚本。
+- 前端在窄屏下自适应为移动端布局：主导航改为底部 Tab，聊天双栏改为单栏。
 
-| 层 | 技术 |
+## 技术栈
+
+| 范围 | 技术 |
 | --- | --- |
-| 后端框架 | Spring Boot 3.x · Spring WebSocket · Spring Security (JWT) |
-| ORM / 数据库 | MyBatis-Plus 3.5.5 · MySQL 8.0 · Flyway（迁移脚本） · Druid 连接池 |
-| 缓存 / 实时 | Redis（会话、在线状态、跨节点 Pub/Sub） |
-| AI | langchain4j 1.18 · DeepSeek（OpenAI 兼容流式） · bge-small-zh-v1.5 本地嵌入 |
-| 文件 | tusd（分片上传） · 受控下载 · SHA-256 校验 |
-| 文档解析 | PDFBox 3.0.8 · Apache POI 5.5.1（知识库） |
-| 前端框架 | Vue 3 (`<script setup>`) · Vite 5 · Vue Router 4 (hash) · Pinia |
-| UI / 请求 | Element Plus 2.7 · Axios |
-| 实时通信 | WebSocket（自实现重连/看门狗） · WebRTC |
-| 上传 | Uppy (`@uppy/core` + `@uppy/tus`) |
-| Markdown | marked + dompurify |
-| 桌面端 | Electron 33 · electron-builder |
+| 后端 | Java 17、Spring Boot 3.5、Spring Security、Spring WebSocket |
+| 数据 | MySQL 8、MyBatis-Plus、Flyway、Druid、Redis |
+| 实时能力 | WebSocket、Redis Pub/Sub、WebRTC、coturn / TURN REST |
+| AI 与 RAG | LangChain4j、DeepSeek（OpenAI 兼容）、bge-small-zh-v1.5、PDFBox、Apache POI |
+| 文件 | tusd、Uppy Tus、SHA-256 完整性校验、受控下载 |
+| Web 前端 | Vue 3、Vite、Vue Router、Pinia、Element Plus、Axios |
+| 富文本 | marked、DOMPurify |
+| 客户端 | Electron、electron-builder、HBuilderX HTML5+ |
 
----
+## 架构
 
-## 三、架构概览
-
-```
-┌────────────────────────────────────────────────────────────┐
-│  前端 Vue3（浏览器 / Electron / 移动端自适应）                 │
-│  HTTP REST + WebSocket(/ws) + WebRTC                        │
-└──────────────┬──────────────────────────────┬───────────────┘
-               │ /api（Vite 代理，去前缀）        │ /files 受控下载
-┌──────────────▼──────────────────────┐   ┌────▼──────────────┐
-│  Spring Boot 后端 (:8088)           │   │  tusd (:1080)      │
-│  ├ Controller / Service / Mapper   │◄──┤  大文件分片存储     │
-│  ├ ChatEndpoint (WebSocket 会话)   │   └────────────────────┘
-│  ├ 消息可靠性：Presence + Pub/Sub  │
-│  ├ AI：langchain4j → DeepSeek / KB │
-│  └ 内容审核 / 通知 / 搜索           │
-└───────┬──────────────┬─────────────┘
-        ▼              ▼
-    MySQL 8.0      Redis（会话/在线/pubsub）
+```text
+Web / Electron / Android
+          │
+          ├── HTTP REST ─────────────────────────────┐
+          ├── WebSocket (/ws) ────────────────────────┤
+          └── WebRTC（媒体直连，TURN 中继兜底）       │
+                                                     ▼
+                                      Spring Boot API 与实时服务
+                                   ┌─────────┬─────────┴──────────┐
+                                   │         │                    │
+                                MySQL     Redis                tusd
+                            业务数据、     在线状态、          大文件分片
+                            审计、迁移     Pub/Sub              上传 Hook
+                                   │
+                                   └── AI Gateway / 受控 Agent
+                                       ├── DeepSeek 流式模型
+                                       ├── 本地知识库检索
+                                       └── 外部天气、联网搜索
 ```
 
-**通信约定**
-- HTTP 用于注册/登录/资料/好友/动态/管理/文件等常规请求。
-- WebSocket（`/ws?token=...`）用于实时消息、已读回执、通话信令、通知、AI 流式 token。
-- 鉴权为 JWT，Token 存 `localStorage`，前端附带本地过期校验（24h）；后端 WS 连接校验 JWT 与账号状态。
-- 大文件走独立 tusd 服务，Spring Boot 负责上传意图、权限、状态机与受控下载。
+## 目录说明
 
----
-
-## 四、目录结构
-
-```
+```text
 Echo-chat-room/
-├── echo-backend/                      # Spring Boot 后端
+├── echo-backend/                 # Spring Boot 服务端
 │   ├── src/main/java/com/echo/
-│   │   ├── config/                    # Security / WebSocket / Redis Pub/Sub 配置
-│   │   ├── controller/                # REST 接口（认证/用户/好友/聊天/动态/群/通知/AI/知识库/管理/文件…）
-│   │   ├── service/                   # 业务逻辑（含 Presence / Group / Notification / Search / Kb…）
-│   │   ├── ai/                        # AI 聊天 / Bot 用户解析
-│   │   ├── file/                      # 文件上传意图、完成校验、迁移
-│   │   ├── websocket/                 # ChatEndpoint + WsEventPublisher/Subscriber
-│   │   ├── pojo/                      # 实体
-│   │   └── mapper/                    # MyBatis-Plus Mapper
-│   ├── src/main/resources/
-│   │   ├── application.yml            # 端口/目录/文件大小/AI/RAG/心跳等配置（全部可用环境变量覆盖）
-│   │   ├── db/migration/              # Flyway V1~V21 迁移脚本（含权限/群聊/知识库/隐私等）
-│   │   └── echo_chat.sql              # 完整建表脚本
-│   └── pom.xml
-├── echo-frontend/                     # Vue 3 前端 + Electron 桌面端
-│   ├── config.js                      # 后端地址（也可用 VITE_API_BASE 等覆盖）
-│   ├── vite.config.js                 # 代理 /api /files /upload /ws → 后端
-│   ├── electron/                      # Electron 主进程与 preload
-│   ├── scripts/dev.mjs                # npm run dev：同时管理 Vite 与本地 tusd
-│   └── src/
-│       ├── router/index.js            # hash 路由 + 鉴权守卫
-│       ├── util/request.js            # Axios 实例 + 拦截器 + upload URL 解析
-│       ├── util/webSocket.js          # WebSocketService（重连/看门狗/auth-failed）
-│       ├── util/tusUpload.js          # Uppy/Tus 大文件上传
-│       ├── composables/               # 移动端断点等组合式函数
-│       └── views/                     # 登录/注册/首页(聊天/好友/动态/设置)/管理后台/AI 助手/知识库…
-├── scripts/                           # start-dev / start-prod / start-tusd (PowerShell)
-├── tools/                             # 本地工具（tusd 二进制、WS 测试脚本）
-├── upload/                            # 运行数据：tusd 临时分片 + 永久文件（不入库）
-├── README.md / PROJECT.md / CLAUDE_HANDOFF.md / api文档.md / 开发日志.md
+│   │   ├── controller/           # REST API、管理端与 tusd Hook
+│   │   ├── websocket/            # WS 会话、消息路由与 Redis Pub/Sub
+│   │   ├── ai/                   # AI 会话、模型适配与知识库关联
+│   │   ├── agent/                # 受控工具编排、授权、确认、审计
+│   │   ├── file/                 # 上传意图、完成确认与受控下载
+│   │   ├── service/              # 业务服务
+│   │   └── mapper/、pojo/        # MyBatis 映射与实体
+│   └── src/main/resources/db/migration/  # Flyway V1～V28
+├── echo-frontend/                # Vue 3 Web 与 Electron 桌面客户端
+│   ├── electron/                 # 主进程与 preload
+│   └── src/views/                # 用户端、AI 助手页、管理后台
+├── echo-chat-phone/              # HBuilderX Android/iOS 工程
+├── scripts/                      # 开发、打包、发布、APK 校验脚本
+├── deploy/                       # Nginx、coturn、FRP 与生产配置模板
+├── tools/                        # tusd 与测试辅助工具
+└── upload/                       # 本地运行数据（不提交）
 ```
 
----
+## 本地开发
 
-## 五、本地快速启动
+### 前置条件
 
-### 前置依赖
-- JDK 17+、Maven 3.8+、Node.js 18+、MySQL 8.0、Redis
+- JDK 17+、Maven 3.8+、Node.js 18+
+- MySQL 8.0 与 Redis
+- Windows PowerShell（本项目提供的 tusd 与发布脚本基于 PowerShell）
 
-### 1. 初始化数据库
-创建库并导入脚本（Flyway 会自动执行 `db/migration` 迁移，也可手动执行 `echo_chat.sql`）：
+### 1. 创建数据库
 
 ```sql
-CREATE DATABASE echo_chat DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE echo_chat
+  DEFAULT CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
 ```
 
-### 2. 配置后端环境变量
-后端所有敏感配置均通过环境变量注入（默认值见 `application.yml`）。本地可复制 `application.yml` 为 `application-local.yml`（已 gitignore）填写：
+首次启动时 Flyway 会执行迁移。请不要手工修改已执行的迁移文件，也不要把历史 `echo_chat.sql` 当作后续升级脚本。
 
-| 变量 | 说明 |
+### 2. 设置本地配置
+
+敏感信息不要写入仓库。可通过系统环境变量或在 `echo-backend/src/main/resources/application-local.yml` 中配置本机值。至少需要：
+
+| 配置 | 用途 |
 | --- | --- |
-| `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | MySQL 连接 |
-| `JWT_SECRET` | JWT 签名密钥 |
-| `MAIL_USERNAME` / `MAIL_PASSWORD` | SMTP 邮箱（验证码） |
-| `AI_API_KEY` | DeepSeek API key（不填则 AI 返回固定文案） |
-| `SERVER_PORT` | 默认 `8088`；`CONTEXT_PATH` 生产可设 `/echo-chat` |
-| `APP_FILE_MAX_SIZE` | 文件大小上限（默认 20 GiB，需同步 tusd） |
+| `DB_URL`、`DB_USERNAME`、`DB_PASSWORD` | MySQL 连接 |
+| `JWT_SECRET` | JWT 签名密钥，必须使用本机随机长字符串 |
+| `MAIL_USERNAME`、`MAIL_PASSWORD` | 邮箱验证码（需要注册邮件时配置） |
+| `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL` | AI 对话模型；未配置时 AI 不可用 |
+| `AI_WEB_SEARCH_API_KEY` | Tavily 联网搜索，可选 |
+| `QWEATHER_API_HOST`、`QWEATHER_API_KEY` 或 `QWEATHER_API_TOKEN` | 和风天气，可选 |
+| `RTC_TURN_URLS` 与 TURN 凭据 | 生产环境音视频通话必需 |
+| `APP_FILE_MAX_SIZE` | 文件上限，默认 20 GiB；需与 tusd 保持一致 |
 
-### 3. 启动后端
-```bash
-cd echo-backend
-mvn spring-boot:run        # 或直接运行 OnlineChatRoomApplication（端口 8088）
-```
+### 3. 启动服务
 
-### 4. 启动 tusd（大文件分片）
+在两个终端分别执行：
+
 ```powershell
-powershell -File scripts/start-tusd.ps1   # 首次会自动下载 tusd 并监听 :1080
-```
+# 终端 1：后端（默认 http://localhost:8088）
+cd echo-backend
+mvn spring-boot:run
 
-### 5. 启动前端
-```bash
+# 终端 2：前端与本地 tusd（默认 http://localhost:8089）
 cd echo-frontend
 npm install
-npm run dev                # Vite 端口 8089，自动打开浏览器；同时管理本地 tusd
+npm run dev
 ```
 
-> 浏览器访问 `http://localhost:8089`。Vite 已将 `/api`、`/files`、`/upload`、`/ws` 代理到后端 `8088`。局域网设备（手机）可用 `npm run dev` 的 host 地址访问。
-
-### 构建 / 打包
-```bash
-cd echo-frontend
-npm run build               # 仅构建前端到 dist/
-npm run electron:build      # 构建前端 + 打包 Windows 桌面程序（release/）
-```
+`npm run dev` 会检查 `1080` 端口；若未运行 tusd，则自动启动。也可以在项目根目录使用：
 
 ```powershell
-# 全量打包（前端构建 + 复制到后端 static + 后端打 jar）
-powershell -File scripts/start-prod.ps1
+powershell -ExecutionPolicy Bypass -File scripts\start-dev.ps1
 ```
 
----
+浏览器访问 `http://localhost:8089`。Vite 会代理 `/api`、`/files`、`/upload` 与 `/ws` 到后端。
 
-## 六、主要数据表
+### 常用验证
 
-详见 `echo-backend/src/main/resources/echo_chat.sql` 与 `db/migration/`：
+```powershell
+# 后端测试
+cd echo-backend
+mvn test
 
-- `user` / `friendship` / `friend_request`
-- `conversation` / `message`（含 `client_message_id`、`read_at`、文件字段）
-- `file_asset`（受控文件元数据）
-- `chat_group` / `chat_group_member` / `chat_group_message` / `chat_group_invitation`
-- `post` / `comment` / `post_like` / `report`
-- `notification` / `system_config`
-- `kb_document` / `kb_chunk`（知识库 + 向量）
-- `ai_assistant`（用户自定义 AI 助手）
+# 前端生产构建
+cd ..\echo-frontend
+npm run build
+```
 
----
+## 构建与发布
 
-## 七、文档导航
+### Windows 桌面端与后端发布包
+
+将 [`deploy/.env.production.example`](./deploy/.env.production.example) 复制为 `deploy/.env.production` 并填写域名、数据库、JWT、AI 与 TURN 配置。该文件包含密钥，已被 Git 忽略。
+
+```powershell
+# 完整发布：Web、后端 JAR、Windows 客户端、移动端资源与 Nginx 配置
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
+
+# 仅构建桌面端（跳过后端和移动端）
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -SkipBackend -SkipMobile
+```
+
+产物写入 `deploy/dist/<时间戳>/`。其中 `desktop/` 包含安装包、便携版及 `SHA256.txt`，`backend/` 包含 JAR 与启动脚本，`nginx/` 包含替换过域名的反向代理配置。
+
+### Android
+
+```powershell
+# 使用明确的局域网 IP 构建开发资源
+powershell -ExecutionPolicy Bypass -File scripts\build-mobile-bundle.ps1 `
+  -Environment development -DevelopmentHost 192.168.1.100
+
+# 使用 deploy/.env.production 的 HTTPS/WSS 配置构建生产资源
+powershell -ExecutionPolicy Bypass -File scripts\build-mobile-bundle.ps1 -Environment production
+```
+
+用 HBuilderX 打开 `echo-chat-phone/echo-chat-phone/` 后进行云打包。打包完成可使用 `scripts/verify-apk.ps1` 验证构建 ID、运行环境、X5 WebView 与媒体权限是否符合预期。
+
+### 生产部署要点
+
+- 生产页面必须使用 HTTPS，WebSocket 使用 WSS；手机与桌面端均从构建期运行时配置读取公共地址。
+- Nginx 分别反代应用路径和 tusd 公共路径；tusd 需要 `-behind-proxy` 与正确的 `-base-path`，对应 location 必须允许分片大小（如 `client_max_body_size 0`）。
+- 大文件上传服务与后端均需启动：发布目录内分别运行 `start-backend.ps1` 与 `start-tusd.ps1`。
+- 音视频通话必须部署真实 coturn。推荐 shared-secret 短期凭据，开放 UDP/TCP 3478 和 relay 端口范围；示例见 [`deploy/coturn/turnserver.conf.example`](./deploy/coturn/turnserver.conf.example)。
+
+## 安全与数据边界
+
+- HTTP 与 WebSocket 使用 JWT 认证，账号状态会在连接与业务请求时校验。
+- 文件不作为静态资源公开：tusd 禁止直读，下载经访问令牌与服务端权限判断。
+- AI、天气和联网搜索密钥只保存在服务端配置，绝不下发到浏览器、Electron 或 APK。
+- Agent 不直接访问数据库、文件路径和任意 URL；仅能使用服务端白名单工具。敏感读取须由助手创建者授权，写入类动作必须经过一次性确认令牌。
+- Agent 运行、工具调用、AI 用量与检索来源保留最小化审计信息；不会记录模型推理、密钥或完整私有资料正文。
+
+## 相关文档
 
 | 文档 | 内容 |
 | --- | --- |
-| [`PROJECT.md`](./PROJECT.md) | 前端实现细节、路由、API 契约、WebSocket 协议、Electron |
-| [`echo-backend/LOCAL_DEVELOPMENT.md`](./echo-backend/LOCAL_DEVELOPMENT.md) | 后端本地开发与安全边界说明 |
-| [`echo-backend/TUSD_LOCAL_DEVELOPMENT.md`](./echo-backend/TUSD_LOCAL_DEVELOPMENT.md) | tusd 大文件上传本地运行说明 |
-| [`开发日志.md`](./开发日志.md) | 持续开发记录与版本进度 |
-| [`新模块开发流程.md`](./新模块开发流程.md) | 新增功能模块的规范流程 |
-| [`CLAUDE_HANDOFF.md`](./CLAUDE_HANDOFF.md) | Claude 交接文档（架构与验证记录） |
+| [`PROJECT.md`](./PROJECT.md) | 前端实现与历史接口说明（部分章节待与当前模块同步） |
+| [`Agent模块技术设计.md`](./Agent模块技术设计.md) | 受控 Agent 的权限、审计与编排设计 |
+| [`Agent工具扩展规划.md`](./Agent工具扩展规划.md) | Agent 工具演进规划 |
+| [`echo-backend/LOCAL_DEVELOPMENT.md`](./echo-backend/LOCAL_DEVELOPMENT.md) | 后端本地配置与 Flyway 约定 |
+| [`echo-backend/TUSD_LOCAL_DEVELOPMENT.md`](./echo-backend/TUSD_LOCAL_DEVELOPMENT.md) | Tus 大文件上传本地调试 |
+| [`部署命令文档.md`](./部署命令文档.md) | 现有部署命令记录 |
+| [`开发日志.md`](./开发日志.md) | 持续开发、验证与回归记录 |
 
----
+## 注意事项
 
-## 八、注意事项
-
-- `application-local.yml`、`echo-backend/src/main/resources/static/config.js` 含本地/生产私密配置（DB、邮箱、DeepSeek key、JWT secret、TURN 凭据），**均已 gitignore**，请勿提交真实凭据。
-- `upload/`、`target/`、`dist/`、`node_modules/` 为运行数据与构建产物，不入库。
-- 大文件状态流：`UPLOADING → UPLOADED → PROCESSING → READY`（异常：`FAILED/EXPIRED/CANCELLED`）；`PROCESSING` 会做完整 SHA-256，超大文件可能需要较长时间。
-- WS 投递依赖 Redis（Pub/Sub 热路径）；Redis 不可用时降级为本实例直发，DB 为真源兜底。
-- 音视频通话需要 HTTPS 或 localhost 的安全上下文才能调用摄像头/麦克风。
+- `upload/`、`target/`、`dist/`、`node_modules/`、`deploy/dist/` 均为运行或构建产物，不应提交。
+- 数据库结构只能通过新增 Flyway 迁移升级；不要修改已经执行过的 `V*.sql`。
+- Redis 是实时在线状态与跨节点推送的加速层，MySQL 是业务数据真源。
+- 默认 CORS 配置便于本地和多端调试；正式公网部署前应按实际域名收紧来源策略。

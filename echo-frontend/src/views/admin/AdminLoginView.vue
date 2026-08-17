@@ -1,7 +1,17 @@
 <template>
   <div class="admin-login">
     <el-card class="login-card">
+      <div class="brand-header">
+        <img class="brand-logo" :src="appLogo" alt="Echo Chat" />
+      </div>
       <h2>管理员登录</h2>
+      <el-alert
+        title="管理员后台仅支持网页版，请勿使用 Windows 或 Android 客户端登录。"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 18px"
+      />
       <el-form :model="form" label-width="80px">
         <el-form-item label="账号">
           <el-input v-model="form.username" @keyup.enter="login" />
@@ -27,6 +37,7 @@ import request from '@/util/request'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
+const appLogo = `${import.meta.env.BASE_URL}favicon.png`
 const form = reactive({ username: '', password: '' })
 const tokenTtlMs = 24 * 60 * 60 * 1000
 
@@ -58,5 +69,16 @@ const login = async () => {
 }
 .login-card {
   width: 400px;
+}
+.brand-header {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+.brand-logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  object-fit: contain;
 }
 </style>

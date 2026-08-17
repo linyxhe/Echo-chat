@@ -45,6 +45,7 @@ public class AiAssistantService {
     private final KbService kbService;
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
+    private final AgentToolGrantService agentToolGrantService;
 
     @Autowired
     public AiAssistantService(AiAssistantMapper assistantMapper,
@@ -52,13 +53,15 @@ public class AiAssistantService {
                               BotUserService botUserService,
                               KbService kbService,
                               ConversationMapper conversationMapper,
-                              MessageMapper messageMapper) {
+                              MessageMapper messageMapper,
+                              AgentToolGrantService agentToolGrantService) {
         this.assistantMapper = assistantMapper;
         this.userMapper = userMapper;
         this.botUserService = botUserService;
         this.kbService = kbService;
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
+        this.agentToolGrantService = agentToolGrantService;
     }
 
     public List<Map<String, Object>> listMine(Long ownerId) {
@@ -80,6 +83,13 @@ public class AiAssistantService {
     @Transactional
     public Result<Object> create(Long ownerId, String name, String assistantType,
                                  String persona, List<String> knowledgeCategories, String defaultOperations) {
+        return create(ownerId, name, assistantType, persona, knowledgeCategories, defaultOperations, null);
+    }
+
+    @Transactional
+    public Result<Object> create(Long ownerId, String name, String assistantType,
+                                 String persona, List<String> knowledgeCategories, String defaultOperations,
+                                 List<String> agentTools) {
         if (ownerId == null) return Result.fail("未登录");
         if (!StringUtils.hasText(name)) return Result.fail("请输入 AI 助手名称");
         String normalizedName = name.trim();
@@ -135,6 +145,7 @@ public class AiAssistantService {
         assistant.setCreatedAt(now);
         assistant.setUpdatedAt(now);
         assistantMapper.insert(assistant);
+        agentToolGrantService.replace(assistant.getId(), agentTools);
         return Result.success(toView(assistant));
     }
 
@@ -180,6 +191,7 @@ public class AiAssistantService {
                     .nested(nested -> nested.eq("user1_id", botUserId).eq("user2_id", ownerId))));
             userMapper.deleteById(botUserId);
         }
+        agentToolGrantService.remove(assistant.getId());
         return assistantMapper.deleteById(assistant.getId()) > 0;
     }
 
@@ -190,6 +202,16 @@ public class AiAssistantService {
         String normalized = StringUtils.hasText(remark) ? remark.trim() : null;
         if (normalized != null && normalized.length() > 50) return Result.fail("备注不能超过 50 个字符");
         assistant.setRemark(normalized);
+        assistant.setUpdatedAt(LocalDateTime.now());
+        assistantMapper.updateById(assistant);
+        return Result.success(toView(assistant));
+    }
+
+    @Transactional
+    public Result<Object> updateAgentTools(Long ownerId, Long assistantId, List<String> agentTools) {
+        AiAssistant assistant = findOwnedById(ownerId, assistantId);
+        if (assistant == null) return Result.fail("AI 助手不存在或无权修改");
+        agentToolGrantService.replace(assistant.getId(), agentTools);
         assistant.setUpdatedAt(LocalDateTime.now());
         assistantMapper.updateById(assistant);
         return Result.success(toView(assistant));
@@ -227,6 +249,10 @@ public class AiAssistantService {
                 ? List.of(assistant.getKnowledgeCategory()) : List.of();
     }
 
+    public List<String> listAgentTools(AiAssistant assistant) {
+        return assistant == null ? List.of() : new ArrayList<>(agentToolGrantService.enabledTools(assistant.getId()));
+    }
+
     private Map<String, Object> toView(AiAssistant assistant) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", assistant.getId());
@@ -238,6 +264,7 @@ public class AiAssistantService {
         map.put("knowledgeCategory", assistant.getKnowledgeCategory());
         map.put("knowledgeCategories", getKnowledgeCategories(assistant));
         map.put("defaultOperations", assistant.getDefaultOperations());
+        map.put("agentTools", agentToolGrantService.enabledTools(assistant.getId()));
         map.put("status", assistant.getStatus());
         map.put("createdAt", assistant.getCreatedAt());
         map.put("updatedAt", assistant.getUpdatedAt());

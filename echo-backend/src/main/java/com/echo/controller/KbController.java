@@ -33,9 +33,11 @@ public class KbController {
     private UserService userService;
 
     @GetMapping("/documents")
-    public Result<Object> list(@RequestParam(required = false) String keyword) {
+    public Result<Object> list(@RequestParam(required = false) String keyword,
+                               @RequestParam(defaultValue = "1") int page,
+                               @RequestParam(defaultValue = "10") int size) {
         if (!isAdmin()) return Result.fail("无权限");
-        return Result.success(kbService.listDocuments(keyword));
+        return Result.success(kbService.listDocumentsPage(keyword, page, size));
     }
 
     @GetMapping("/documents/{id}")

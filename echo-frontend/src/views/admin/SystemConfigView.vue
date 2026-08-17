@@ -37,6 +37,80 @@
     <el-card class="box-card" style="margin-bottom: 20px">
       <template #header>
         <div class="card-header">
+          <span>联网搜索额度保护</span>
+          <el-button type="primary" size="small" :loading="searchQuotaSaving" @click="saveSearchQuota">保存设置</el-button>
+        </div>
+      </template>
+      <el-alert
+        title="仅控制联网搜索调用次数，不会把 API Key 暴露到前端。达到保护线后，AI 会说明额度已暂停，不再请求外部搜索服务。"
+        type="info"
+        show-icon
+        :closable="false"
+        style="margin-bottom: 14px"
+      />
+      <div class="quota-grid">
+        <div class="ai-toggle">
+          <span>启用联网搜索</span>
+          <el-switch v-model="searchQuota.enabled" />
+        </div>
+        <el-form-item label="每月额度（次）">
+          <el-input-number v-model="searchQuota.monthlyQuota" :min="1" :max="10000000" :step="100" />
+        </el-form-item>
+        <el-form-item label="停止使用比例（%）">
+          <el-input-number v-model="searchQuota.stopPercent" :min="1" :max="100" />
+        </el-form-item>
+      </div>
+      <div class="quota-status">
+        本月 {{ searchQuota.month || '—' }}：已使用 {{ searchQuota.used }} 次，保护线 {{ searchQuota.stopAt }} 次；
+        <el-tag size="small" :type="searchQuota.available ? 'success' : 'danger'">
+          {{ searchQuota.available ? '当前可用' : '已暂停调用' }}
+        </el-tag>
+      </div>
+    </el-card>
+
+    <el-card class="box-card" style="margin-bottom: 20px">
+      <template #header>
+        <div class="card-header">
+          <span>实时天气额度保护</span>
+          <el-button type="primary" size="small" :loading="weatherQuotaSaving" @click="saveWeatherQuota">保存设置</el-button>
+        </div>
+      </template>
+      <el-alert
+        title="天气 API Key、Host 仍由服务端私密配置；这里控制天气查询是否开放及免费额度保护。"
+        type="info"
+        show-icon
+        :closable="false"
+        style="margin-bottom: 14px"
+      />
+      <div class="quota-grid">
+        <div class="ai-toggle">
+          <span>启用实时天气</span>
+          <el-switch v-model="weatherQuota.enabled" />
+        </div>
+        <el-form-item :label="weatherQuota.quotaPeriod === 'DAILY' ? '每日额度（次）' : '每月额度（次）'">
+          <el-input-number v-model="weatherQuota.monthlyQuota" :min="1" :max="10000000" :step="100" />
+        </el-form-item>
+        <el-form-item label="统计周期">
+          <el-select v-model="weatherQuota.quotaPeriod" style="width: 140px">
+            <el-option label="每日" value="DAILY" />
+            <el-option label="每月" value="MONTHLY" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="停止使用比例（%）">
+          <el-input-number v-model="weatherQuota.stopPercent" :min="1" :max="100" />
+        </el-form-item>
+      </div>
+      <div class="quota-status">
+        {{ weatherQuota.quotaPeriod === 'DAILY' ? '今日' : '本月' }} {{ weatherQuota.period || weatherQuota.month || '—' }}：已使用 {{ weatherQuota.used }} 次，保护线 {{ weatherQuota.stopAt }} 次；
+        <el-tag size="small" :type="weatherQuota.available ? 'success' : 'danger'">
+          {{ weatherQuota.available ? '当前可用' : '已暂停调用' }}
+        </el-tag>
+      </div>
+    </el-card>
+
+    <el-card class="box-card" style="margin-bottom: 20px">
+      <template #header>
+        <div class="card-header">
           <span>AI 助手</span>
         </div>
       </template>
@@ -155,6 +229,27 @@ const aiEnabled = ref(true); // AI 助手总开关，缺省启用
 const aiSaving = ref(false);
 const broadcastForm = reactive({ title: "", content: "" });
 const broadcasting = ref(false);
+const searchQuotaSaving = ref(false);
+const searchQuota = reactive({
+  enabled: true,
+  monthlyQuota: 1000,
+  stopPercent: 90,
+  used: 0,
+  stopAt: 900,
+  available: true,
+  month: "",
+});
+const weatherQuotaSaving = ref(false);
+const weatherQuota = reactive({
+  enabled: true,
+  monthlyQuota: 1000,
+  stopPercent: 100,
+  quotaPeriod: "DAILY",
+  used: 0,
+  stopAt: 900,
+  available: true,
+  month: "",
+});
 const { isMobile } = useMobileViewport();
 const form = reactive({
   key: "",
@@ -226,6 +321,63 @@ const saveAiEnabled = async (val) => {
   }
 };
 
+const fetchSearchQuota = async () => {
+  try {
+    const res = await request.get("/admin/system/search-quota");
+    if (res.code === 200 && res.data) Object.assign(searchQuota, res.data);
+  } catch (e) {}
+};
+
+const saveSearchQuota = async () => {
+  searchQuotaSaving.value = true;
+  try {
+    const res = await request.put("/admin/system/search-quota", {
+      enabled: Boolean(searchQuota.enabled),
+      monthlyQuota: Number(searchQuota.monthlyQuota),
+      stopPercent: Number(searchQuota.stopPercent),
+    });
+    if (res.code === 200) {
+      if (res.data) Object.assign(searchQuota, res.data);
+      ElMessage.success("联网搜索额度保护已更新");
+    } else {
+      ElMessage.error(res.message || "保存失败");
+    }
+  } catch (e) {
+    ElMessage.error("保存失败");
+  } finally {
+    searchQuotaSaving.value = false;
+  }
+};
+
+const fetchWeatherQuota = async () => {
+  try {
+    const res = await request.get("/admin/system/weather-quota");
+    if (res.code === 200 && res.data) Object.assign(weatherQuota, res.data);
+  } catch (e) {}
+};
+
+const saveWeatherQuota = async () => {
+  weatherQuotaSaving.value = true;
+  try {
+    const res = await request.put("/admin/system/weather-quota", {
+      enabled: Boolean(weatherQuota.enabled),
+      monthlyQuota: Number(weatherQuota.monthlyQuota),
+      quotaPeriod: weatherQuota.quotaPeriod,
+      stopPercent: Number(weatherQuota.stopPercent),
+    });
+    if (res.code === 200) {
+      if (res.data) Object.assign(weatherQuota, res.data);
+      ElMessage.success("实时天气额度保护已更新");
+    } else {
+      ElMessage.error(res.message || "保存失败");
+    }
+  } catch (e) {
+    ElMessage.error("保存失败");
+  } finally {
+    weatherQuotaSaving.value = false;
+  }
+};
+
 const saveSensitiveWords = async () => {
   try {
     const res = await request.put("/admin/system/configs", {
@@ -275,6 +427,8 @@ const submitConfig = async () => {
 
 onMounted(() => {
   fetchConfigs();
+  fetchSearchQuota();
+  fetchWeatherQuota();
 });
 </script>
 
@@ -292,6 +446,20 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
 }
+.quota-grid {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  flex-wrap: wrap;
+}
+.quota-grid :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+.quota-status {
+  margin-top: 14px;
+  color: #6b7280;
+  font-size: 13px;
+}
 
 @media (max-width: 768px) {
   .system-config {
@@ -299,6 +467,11 @@ onMounted(() => {
   }
   .card-header {
     gap: 12px;
+  }
+  .quota-grid {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
   }
   .table-scroll {
     overflow-x: auto;
