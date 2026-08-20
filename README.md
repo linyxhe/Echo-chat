@@ -1,7 +1,7 @@
 # Echo Chat · 回声聊天室
 
 Echo Chat 是一个面向 Web、Windows 桌面端和 Android 的实时社交聊天应用。项目以 Spring Boot 为服务端、Vue 3 为统一前端，提供即时通信、群聊、受控文件传输、音视频通话、AI 助手与知识库，并包含运营管理后台和发布链路。
-
+在线地址：www.linyxhe.top/echo-chat
 > 本文档以当前代码为准，数据库结构由 Flyway 迁移 `V1`～`V28` 管理。接口字段与实时消息事件请以 Controller、`ChatEndpoint` 和前端实现为准。
 
 ## 功能概览
